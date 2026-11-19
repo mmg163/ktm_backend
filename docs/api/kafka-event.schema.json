@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktm.local/schemas/kafka-event/v1.json",
+  "title": "KtmKafkaEvent v1",
+  "description": "Единое сообщение адаптера (СКУД, CV, 1С:ДО) в Kafka. Читается Data Saver. Версия формата 1.",
+  "type": "object",
+  "required": ["schemaVersion", "source", "sourceEventId", "occurredAt", "eventType", "externalPersonId", "payload"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Версия формата сообщения. Целое число; для этой схемы всегда 1.",
+      "const": 1
+    },
+    "source": {
+      "description": "Источник события.",
+      "enum": ["skud", "cv", "1c-do"]
+    },
+    "sourceEventId": {
+      "description": "ID события в источнике (у СКУД - EventId из Орион Про). Уникален в пределах source.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "occurredAt": {
+      "description": "Момент события в источнике, ISO-8601, строго UTC (суффикс Z).",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "eventType": {
+      "description": "Тип события в словаре источника (snake_case).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 64
+    },
+    "deviceId": {
+      "description": "Турникет/дверь/камера в терминах источника. Обязателен для skud и cv; для 1c-do отсутствует или null.",
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "externalPersonId": {
+      "description": "Идентификатор человека как в источнике (номер карты, табельный номер и т.п.). Привязка к сотруднику - задача уровня 1 (Процессор привязки), не адаптера.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "payload": {
+      "description": "Остальные данные источника без изменений. Структура зависит от source/eventType. Не содержит изображений, видео и биометрических шаблонов - только признаки качества и ссылки на внешнее хранилище.",
+      "type": "object"
+    },
+    "correction": {
+      "description": "Присутствует только в корректирующем сообщении. Исходное событие не изменяется (журнал неизменяем); корректирующее сообщение - новая запись со своим sourceEventId.",
+      "type": "object",
+      "required": ["correctsSourceEventId", "correctsOccurredAt"],
+      "properties": {
+        "correctsSourceEventId": {
+          "description": "sourceEventId исходного события (тот же source).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "correctsOccurredAt": {
+          "description": "occurredAt исходного события: вместе с source и sourceEventId образует составной ключ идемпотентности (docs/05, п. 5.1).",
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "reason": {
+          "description": "Причина исправления в свободной форме.",
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "source": { "enum": ["skud", "cv"] } }, "required": ["source"] },
+      "then": { "required": ["deviceId"], "properties": { "deviceId": { "type": "string" } } }
+    }
+  ],
+  "additionalProperties": true
+}
