@@ -1,0 +1,31 @@
+kafka_home: /opt/kafka
+kafka_conf: /etc/kafka/server.properties
+kafka_user: kafka
+kafka_group: kafka
+kafka_node_id: 1
+kafka_data_dir: /var/lib/kafka/data
+kafka_advertised_host: 10.14.0.6   # адрес сервера в WireGuard
+kafka_port: 9092
+kafka_controller_port: 9093
+kafka_auto_create_topics: false
+kafka_default_partitions: 1        # дефолт только для служебных топиков; ktm-топики заданы ниже
+kafka_log_retention_hours: 168
+
+# Доступ к порту брокера в UFW (PLAINTEXT, без аутентификации — только эти сети)
+kafka_ufw_sources:
+  - { cidr: 10.14.0.0/24,   comment: kafka WireGuard }
+  - { cidr: 172.18.0.0/16,  comment: kafka docker }
+
+_day: 86400000
+# Ключ сообщения: "<источник>:<ID события в источнике>" (задаётся продюсером — адаптером)
+kafka_topics:
+  - { name: ktm.events.raw.skud,  partitions: 3, retention_ms: "{{ 7 * _day }}" }
+  - { name: ktm.events.raw.cv,    partitions: 3, retention_ms: "{{ 7 * _day }}" }
+  - { name: ktm.events.raw.1c-do, partitions: 3, retention_ms: "{{ 7 * _day }}" }
+  - { name: ktm.events.rejected,  partitions: 3, retention_ms: "{{ 30 * _day }}" }
+  - { name: ktm.events.dlq,       partitions: 3, retention_ms: "{{ 30 * _day }}" }
+kafka_replication_factor: 1        # один брокер
+
+# Топики, которые должны быть удалены
+kafka_topics_absent:
+  - quickstart-events

@@ -1,0 +1,5 @@
+- name: Kafka (KRaft, single node)
+  hosts: kafka
+  become: true
+  roles:
+    - kafka
