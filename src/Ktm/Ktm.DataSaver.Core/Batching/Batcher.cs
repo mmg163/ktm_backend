@@ -57,7 +57,9 @@ public sealed class Batcher<T>
     /// <summary>Принудительно забирает накопленное (graceful shutdown). Пустую пачку не отдаёт.</summary>
     public IReadOnlyList<T>? TakeAll() => _items.Count == 0 ? null : Drain();
 
-    /// <summary>Убирает накопленные элементы по условию (отзыв партиций). Время закрытия пачки не меняется.</summary>
+    /// <summary>Убирает накопленные элементы по условию (отзыв партиций). Время закрытия пачки не меняется:
+    /// отсчёт идёт от первого добавленного сообщения (индивидуальные времена не хранятся); это лишь раньше закроет пачку,
+    /// что безопасно. Пустой накопитель начинает отсчёт заново при следующем Add.</summary>
     public int RemoveWhere(Predicate<T> match) => _items.RemoveAll(match);
 
     private IReadOnlyList<T> Drain()

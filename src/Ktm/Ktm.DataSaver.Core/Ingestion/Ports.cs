@@ -14,10 +14,18 @@ public sealed record AssignmentChanges(
     public bool IsEmpty => Assigned.Count == 0 && Revoked.Count == 0;
 }
 
-/// <summary>Порт чтения (4.1/4.2). Вызывается из одного потока цикла; обработчики ребаланса лишь копят изменения.</summary>
+/// <summary>
+/// Порт чтения (4.1/4.2). Вызывается только из потока цикла. Обработчики ребаланса librdkafka выполняются внутри
+/// <see cref="ConsumeAsync"/> и только накапливают изменения назначения; цикл забирает их через
+/// <see cref="TakeAssignmentChanges"/> (только из потока цикла).
+/// Нефатальные ошибки брокера адаптер поглощает внутри <see cref="ConsumeAsync"/>; фатальные - через IProcessTerminator (4.5).
+/// </summary>
 public interface IMessageSource
 {
-    /// <summary>Одно сообщение либо null по таймауту. На паузе партиций сообщений не возвращает, но продолжает опрос группы.</summary>
+    /// <summary>
+    /// Блокируется до сообщения или таймаута. Null означает «нет сообщений за таймаут» (цикл подстрахуется от возврата
+    /// раньше таймаута паузой). На паузе партиций сообщений не возвращает, но продолжает опрос группы.
+    /// </summary>
     ValueTask<ConsumedMessage?> ConsumeAsync(TimeSpan timeout, CancellationToken cancellationToken);
 
     /// <summary>Текущее назначение партиций.</summary>
@@ -26,12 +34,17 @@ public interface IMessageSource
     /// <summary>Забирает назначения/отзывы партиций, случившиеся с прошлого вызова (и обнуляет накопленное).</summary>
     AssignmentChanges TakeAssignmentChanges();
 
+    /// <summary>Ставит партиции на паузу. Принимает любые партиции: неизвестные и отозванные молча игнорирует, не бросает.</summary>
     void Pause(IReadOnlyCollection<TopicPartitionKey> partitions);
 
+    /// <summary>Снимает паузу. Контракт тот же, что у <see cref="Pause"/>: неизвестные и отозванные партиции игнорируются.</summary>
     void Resume(IReadOnlyCollection<TopicPartitionKey> partitions);
 }
 
-/// <summary>Порт записи в журнал (5.x): одна транзакция на вызов, идемпотентно по ключу события. Сбой - исключение.</summary>
+/// <summary>
+/// Порт записи в журнал (5.x): одна транзакция на вызов. Исключение означает, что транзакция откатана целиком;
+/// запись идемпотентна по ключу события, поэтому повтор той же пачки безопасен.
+/// </summary>
 public interface IEventStore
 {
     ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken);
@@ -58,7 +71,10 @@ public sealed record RejectionPublishResult
     }
 }
 
-/// <summary>Порт публикации отбракованных (4.4): ждёт подтверждения брокера.</summary>
+/// <summary>
+/// Порт публикации отбракованных (4.4): ждёт подтверждения брокера. Реализация обязана иметь собственный таймаут
+/// ожидания подтверждений (отказ - <see cref="RejectionPublishResult.Failure"/>); исключение не считается отбраковкой.
+/// </summary>
 public interface IRejectionPublisher
 {
     ValueTask<RejectionPublishResult> PublishAsync(IReadOnlyList<RejectedMessage> rejected, CancellationToken cancellationToken);
@@ -74,14 +90,4 @@ public interface IOffsetCommitter
 public interface IAdminNotifier
 {
     void NotifyFatalConfig(Exception error, int attempt);
-}
-
-/// <summary>Заглушка: только считает оповещения; видимость обеспечивает Error-лог цикла.</summary>
-public sealed class CountingAdminNotifier : IAdminNotifier
-{
-    private long _count;
-
-    public long Count => Interlocked.Read(ref _count);
-
-    public void NotifyFatalConfig(Exception error, int attempt) => Interlocked.Increment(ref _count);
 }

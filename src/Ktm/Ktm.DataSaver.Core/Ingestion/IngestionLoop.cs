@@ -6,9 +6,13 @@ using Microsoft.Extensions.Logging;
 
 namespace Ktm.DataSaver.Core.Ingestion;
 
+/// <summary>Состояние цикла приёма для readiness-проверки.</summary>
 public enum IngestionState
 {
+    /// <summary>Штатная работа: партиции читаются, записи проходят.</summary>
     Running,
+
+    /// <summary>Сбой записи или публикации: партиции на паузе, идёт повтор той же пачки (readiness = 503).</summary>
     Degraded,
 }
 
@@ -19,6 +23,7 @@ public sealed record IngestionLoopOptions(TimeSpan PollInterval, TimeSpan Shutdo
 /// Цикл приёма (ADR-0002, D-5...D-8): накопление пачки, запись, публикация отбракованных, commit offset+1 по всем
 /// сообщениям пачки. Commit только после успеха обоих шагов. Весь цикл в одном потоке; остановку только
 /// сигнализируют токеном, пачку дописывает сам цикл. Ошибки данных решает порт C6.
+/// Экземпляр одноразовый: <see cref="RunAsync"/> можно вызвать один раз.
 /// </summary>
 public sealed class IngestionLoop(
     IMessageSource source,
@@ -35,9 +40,15 @@ public sealed class IngestionLoop(
     ILogger<IngestionLoop> logger)
 {
     private readonly OffsetTracker _tracker = new();
-    private CancellationTokenSource? _shutdownDeadline;
+
+    // Предел остановки: отсчёт стартует в момент сигнала stop (см. RunAsync); до него токен не отменяется.
+    private readonly CancellationTokenSource _deadline = new();
+    private CancellationToken _stop;
+    private Func<HashSet<TopicPartitionKey>, int>? _pruneCurrent;
     private volatile IngestionState _state = IngestionState.Running;
     private int _retryCount;
+    private int _started;
+    private bool _immediateRetryGranted;
 
     /// <summary>Состояние для readiness: <c>Degraded</c> = 503.</summary>
     public IngestionState State => _state;
@@ -45,110 +56,198 @@ public sealed class IngestionLoop(
     /// <summary>Число неудачных попыток текущей пачки (0 при нормальной работе).</summary>
     public int RetryCount => Volatile.Read(ref _retryCount);
 
-    private CancellationToken IoToken => _shutdownDeadline?.Token ?? CancellationToken.None;
-
-    private bool ShuttingDown => _shutdownDeadline is not null;
+    private CancellationToken IoToken => _deadline.Token;
 
     /// <summary>
-    /// Работает до сигнала остановки, затем дописывает накопленное в пределах <c>ShutdownTimeout</c>.
-    /// Возврат без исключения - и штатный выход, и выход без commit при недоступной БД (см. логи).
+    /// Работает до сигнала остановки, затем дописывает накопленное в пределах <c>ShutdownTimeout</c>, который
+    /// отсчитывается от сигнала. Возврат без исключения - и штатный выход, и выход без commit при недоступной БД
+    /// (см. логи). Повторный вызов бросает <see cref="InvalidOperationException"/>.
     /// </summary>
     public async Task RunAsync(CancellationToken stop)
     {
+        if (Interlocked.Exchange(ref _started, 1) != 0)
+        {
+            throw new InvalidOperationException("IngestionLoop.RunAsync may be called only once.");
+        }
+
+        _stop = stop;
+        ITimer? deadlineTimer = null;
+        var registration = stop.Register(() =>
+            Volatile.Write(ref deadlineTimer, timeProvider.CreateTimer(_ => _deadline.Cancel(), null, options.ShutdownTimeout, Timeout.InfiniteTimeSpan)));
         try
         {
             while (!stop.IsCancellationRequested)
             {
-                DrainAssignmentChanges(null);
+                DrainAssignmentChanges();
 
                 var wait = batcher.TimeUntilDeadline() is { } left && left < options.PollInterval ? left : options.PollInterval;
+                var started = timeProvider.GetTimestamp();
+                ConsumedMessage? message;
                 try
                 {
-                    if (await source.ConsumeAsync(wait, stop) is { } message)
-                    {
-                        batcher.Add(message);
-                    }
+                    message = await source.ConsumeAsync(wait, stop);
                 }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested)
                 {
                     break;
                 }
 
-                DrainAssignmentChanges(null);
+                // Изменения назначения применяются ДО добавления сообщения: при Revoke(P)+Assign(P) в одном Consume
+                // сообщение P уже принадлежит новому назначению и не должно быть выброшено.
+                DrainAssignmentChanges();
 
-                if (batcher.TryTakeReady() is { } batch && !await ProcessBatchAsync(batch, stop))
+                if (message is not null)
+                {
+                    batcher.Add(message);
+                }
+                else
+                {
+                    await IdleGuardAsync(started, wait);
+                }
+
+                if (batcher.TryTakeReady() is { } batch && !await ProcessBatchAsync(batch))
                 {
                     return;
                 }
             }
 
             // Остановка: прекращаем Consume, дописываем накопленное (включая пришедшее во время Degraded).
-            StartShutdown();
-            DrainAssignmentChanges(null);
+            DrainAssignmentChanges();
             if (batcher.TakeAll() is { } rest)
             {
-                await ProcessBatchAsync(rest, stop);
+                await ProcessBatchAsync(rest);
             }
         }
         finally
         {
-            _shutdownDeadline?.Dispose();
+            await registration.DisposeAsync();
+            Volatile.Read(ref deadlineTimer)?.Dispose();
+            _deadline.Dispose();
         }
     }
 
-    /// <summary>false - предел остановки вышел до успеха, commit не выполнен.</summary>
-    private async Task<bool> ProcessBatchAsync(IReadOnlyList<ConsumedMessage> batch, CancellationToken stop)
+    /// <summary>
+    /// Защита от busy-loop: адаптер мог вернуть null раньше таймаута (контракт требует блокировки до таймаута).
+    /// Недостающую часть ожидания добираем сами.
+    /// </summary>
+    private async Task IdleGuardAsync(long started, TimeSpan wait)
     {
-        var results = batch.Select(pipeline.Process).ToList();
-        var deadLettered = new HashSet<ConsumedMessage>(ReferenceEqualityComparer.Instance);
-
-        if (!await WriteStageAsync(results, deadLettered, stop) || !await PublishStageAsync(results, stop))
+        var rest = wait - timeProvider.GetElapsedTime(started);
+        if (rest <= TimeSpan.Zero)
         {
-            logger.LogWarning("Shutdown deadline reached before batch of {Size} was finished; offsets are not committed", batch.Count);
-            return false;
-        }
-
-        DrainAssignmentChanges(results);
-        _tracker.Reset();
-        foreach (var result in results)
-        {
-            _tracker.Track(new PartitionOffset(result.Message.Topic, result.Message.Partition, result.Message.Offset));
-        }
-
-        var offsets = _tracker.GetOffsetsToCommit();
-        _tracker.Reset();
-
-        backoff.Reset();
-        Volatile.Write(ref _retryCount, 0);
-        LeaveDegraded();
-
-        if (offsets.Count == 0)
-        {
-            return true;
+            return;
         }
 
         try
         {
-            await committer.CommitAsync(offsets, IoToken);
+            await Task.Delay(rest, timeProvider, _stop);
         }
-        catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
-            return false;
+            // Сигнал остановки: вызывающий проверит токен.
         }
-        catch (Exception ex)
-        {
-            // D-6: ошибка commit (потеря партиции) не роняет сервис; пачка придёт повторно и будет погашена ключом.
-            logger.LogWarning(ex, "Offset commit failed for batch of {Size}; the batch will be redelivered", batch.Count);
-        }
-
-        return true;
     }
 
-    private async Task<bool> WriteStageAsync(List<PipelineResult> results, HashSet<ConsumedMessage> deadLettered, CancellationToken stop)
+    /// <summary>false - предел остановки вышел до успеха, commit не выполнен.</summary>
+    private async Task<bool> ProcessBatchAsync(IReadOnlyList<ConsumedMessage> batch)
+    {
+        var raw = batch.ToList();
+        var results = new List<PipelineResult>();
+        _pruneCurrent = revoked =>
+        {
+            bool IsRevoked(ConsumedMessage m) => revoked.Contains(new TopicPartitionKey(m.Topic, m.Partition));
+            return raw.RemoveAll(IsRevoked) + results.RemoveAll(r => IsRevoked(r.Message));
+        };
+
+        try
+        {
+            var deadLettered = new HashSet<ConsumedMessage>(ReferenceEqualityComparer.Instance);
+            if (!await ClassifyStageAsync(raw, results)
+                || !await WriteStageAsync(results, deadLettered)
+                || !await PublishStageAsync(results))
+            {
+                logger.LogWarning("Shutdown deadline reached before batch of {Size} was finished; offsets are not committed", batch.Count);
+                return false;
+            }
+
+            DrainAssignmentChanges();
+            _tracker.Reset();
+            foreach (var result in results)
+            {
+                _tracker.Track(new PartitionOffset(result.Message.Topic, result.Message.Partition, result.Message.Offset));
+            }
+
+            var offsets = _tracker.GetOffsetsToCommit();
+            _tracker.Reset();
+
+            backoff.Reset();
+            Volatile.Write(ref _retryCount, 0);
+            LeaveDegraded();
+
+            if (offsets.Count == 0)
+            {
+                return true;
+            }
+
+            try
+            {
+                await committer.CommitAsync(offsets, IoToken);
+            }
+            catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // D-6: ошибка commit (потеря партиции) не роняет сервис; пачка придёт повторно и будет погашена ключом.
+                logger.LogWarning(ex, "Offset commit failed for batch of {Size}; the batch will be redelivered", batch.Count);
+            }
+
+            return true;
+        }
+        finally
+        {
+            _pruneCurrent = null;
+        }
+    }
+
+    /// <summary>
+    /// Классификация пачки конвейером. Исключение стадии (недоступность C5 и т.п.) - сбой пачки, а не отбраковка:
+    /// Error-лог, Degraded, повтор с backoff.
+    /// </summary>
+    private async Task<bool> ClassifyStageAsync(List<ConsumedMessage> raw, List<PipelineResult> results)
     {
         while (true)
         {
-            DrainAssignmentChanges(results);
+            DrainAssignmentChanges();
+            results.Clear();
+            try
+            {
+                foreach (var message in raw)
+                {
+                    results.Add(pipeline.Process(message));
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                var attempt = Interlocked.Increment(ref _retryCount);
+                logger.LogError(ex, "Pipeline stage failed for batch of {Size}, attempt {Attempt}; batch is retried, not rejected", raw.Count, attempt);
+                EnterDegraded();
+                if (!await BackoffWaitAsync())
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    private async Task<bool> WriteStageAsync(List<PipelineResult> results, HashSet<ConsumedMessage> deadLettered)
+    {
+        while (true)
+        {
+            DrainAssignmentChanges();
             var events = results
                 .Where(r => r.Event is not null && !deadLettered.Contains(r.Message))
                 .Select(r => r.Event!)
@@ -175,15 +274,28 @@ public sealed class IngestionLoop(
                 if (errorClass == WriteErrorClass.Data)
                 {
                     var context = new WriteFailureContext(results.Select(r => r.Message).ToList(), ex, attempt);
-                    var decision = await failureHandler.HandleAsync(context, IoToken);
-                    if (decision.Kind == WriteFailureKind.DeadLetter && decision.DeadLetterItems.Count > 0)
+                    WriteFailureDecision decision;
+                    try
                     {
-                        deadLettered.UnionWith(decision.DeadLetterItems);
+                        decision = await failureHandler.HandleAsync(context, IoToken);
+                    }
+                    catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
+                    {
+                        return false;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        logger.LogWarning("Write failure handler was cancelled by its own timeout, attempt {Attempt}; treated as Retry", attempt);
+                        decision = WriteFailureDecision.Retry;
+                    }
+
+                    if (decision.Kind == WriteFailureKind.DeadLetter && TryAcceptDeadLetter(context, decision, deadLettered))
+                    {
                         logger.LogError(ex, "Write failed with data error; {Count} messages handed over to the failure handler", decision.DeadLetterItems.Count);
                         continue;
                     }
 
-                    logger.LogError(ex, "Write failed with data error, attempt {Attempt}; partition stays blocked (no failure handler decision)", attempt);
+                    logger.LogError(ex, "Write failed with data error, attempt {Attempt}; partition stays blocked (no failure handler progress)", attempt);
                 }
                 else if (errorClass == WriteErrorClass.FatalConfig)
                 {
@@ -196,7 +308,7 @@ public sealed class IngestionLoop(
                 }
 
                 EnterDegraded();
-                if (!await BackoffWaitAsync(results, stop))
+                if (!await BackoffWaitAsync())
                 {
                     return false;
                 }
@@ -204,11 +316,29 @@ public sealed class IngestionLoop(
         }
     }
 
-    private async Task<bool> PublishStageAsync(List<PipelineResult> results, CancellationToken stop)
+    /// <summary>
+    /// Решение DeadLetter принимается, только если все сообщения принадлежат текущей пачке и набор реально вырос;
+    /// иначе (нет прогресса, чужие сообщения) это Retry с backoff - иначе цикл крутился бы без пауз.
+    /// </summary>
+    private static bool TryAcceptDeadLetter(WriteFailureContext context, WriteFailureDecision decision, HashSet<ConsumedMessage> deadLettered)
+    {
+        var items = decision.DeadLetterItems;
+        var batch = new HashSet<ConsumedMessage>(context.Batch, ReferenceEqualityComparer.Instance);
+        if (items.Count == 0 || !items.All(batch.Contains))
+        {
+            return false;
+        }
+
+        var before = deadLettered.Count;
+        deadLettered.UnionWith(items);
+        return deadLettered.Count > before;
+    }
+
+    private async Task<bool> PublishStageAsync(List<PipelineResult> results)
     {
         while (true)
         {
-            DrainAssignmentChanges(results);
+            DrainAssignmentChanges();
             var rejected = results
                 .Where(r => !r.Verdict.IsAccepted)
                 .Select(r => new RejectedMessage(r.Message, r.Verdict.Rejection!))
@@ -242,7 +372,7 @@ public sealed class IngestionLoop(
             var attempt = Interlocked.Increment(ref _retryCount);
             logger.LogWarning("Publishing {Count} rejected messages failed, attempt {Attempt}: {Error}", rejected.Count, attempt, outcome.Error);
             EnterDegraded();
-            if (!await BackoffWaitAsync(results, stop))
+            if (!await BackoffWaitAsync())
             {
                 return false;
             }
@@ -251,20 +381,21 @@ public sealed class IngestionLoop(
 
     /// <summary>
     /// Пауза перед повтором. В штатном режиме опрашиваем Consume (на паузе он сообщений не отдаёт), чтобы не вылететь
-    /// по max.poll.interval. Сигнал остановки прерывает ожидание: следующая попытка без паузы, дальше паузы идут в
-    /// пределах ShutdownTimeout. false - предел остановки вышел.
+    /// по max.poll.interval. Когда приходит сигнал остановки, ожидание прерывается и следующая попытка выполняется
+    /// немедленно (один раз); дальнейшие паузы идут уже в пределах дедлайна остановки. false - дедлайн вышел.
     /// </summary>
-    private async Task<bool> BackoffWaitAsync(List<PipelineResult> current, CancellationToken stop)
+    private async Task<bool> BackoffWaitAsync()
     {
         var delay = backoff.NextDelay();
 
-        if (!ShuttingDown && stop.IsCancellationRequested)
+        if (_stop.IsCancellationRequested)
         {
-            StartShutdown();
-        }
+            if (!_immediateRetryGranted)
+            {
+                _immediateRetryGranted = true;
+                return true;
+            }
 
-        if (ShuttingDown)
-        {
             try
             {
                 await Task.Delay(delay, timeProvider, IoToken);
@@ -285,24 +416,30 @@ public sealed class IngestionLoop(
                 return true;
             }
 
+            var wait = remaining < options.PollInterval ? remaining : options.PollInterval;
+            var started = timeProvider.GetTimestamp();
             try
             {
-                if (await source.ConsumeAsync(remaining < options.PollInterval ? remaining : options.PollInterval, stop) is { } message)
+                var message = await source.ConsumeAsync(wait, _stop);
+                DrainAssignmentChanges();
+                if (message is not null)
                 {
                     batcher.Add(message);
                 }
+                else
+                {
+                    await IdleGuardAsync(started, wait);
+                }
             }
-            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
             {
-                StartShutdown();
+                _immediateRetryGranted = true;
                 return true;
             }
 
-            DrainAssignmentChanges(current);
-
-            if (stop.IsCancellationRequested)
+            if (_stop.IsCancellationRequested)
             {
-                StartShutdown();
+                _immediateRetryGranted = true;
                 return true;
             }
         }
@@ -312,7 +449,7 @@ public sealed class IngestionLoop(
     /// Применяет ребаланс: сообщения отозванных партиций выбрасываются из накопителя и текущей пачки (Track для них
     /// не вызывается - контракт OffsetTracker), новые партиции в Degraded сразу ставятся на паузу.
     /// </summary>
-    private void DrainAssignmentChanges(List<PipelineResult>? current)
+    private void DrainAssignmentChanges()
     {
         var changes = source.TakeAssignmentChanges();
         if (changes.IsEmpty)
@@ -325,7 +462,7 @@ public sealed class IngestionLoop(
             var revoked = changes.Revoked.ToHashSet();
             _tracker.Revoke(revoked);
             var removed = batcher.RemoveWhere(m => revoked.Contains(new TopicPartitionKey(m.Topic, m.Partition)));
-            removed += current?.RemoveAll(r => revoked.Contains(new TopicPartitionKey(r.Message.Topic, r.Message.Partition))) ?? 0;
+            removed += _pruneCurrent?.Invoke(revoked) ?? 0;
             logger.LogInformation("Partitions revoked: {Partitions}; {Removed} messages dropped without write", revoked.Count, removed);
         }
 
@@ -358,7 +495,4 @@ public sealed class IngestionLoop(
         _state = IngestionState.Running;
         logger.LogInformation("Ingestion recovered: partitions resumed");
     }
-
-    private void StartShutdown() =>
-        _shutdownDeadline ??= new CancellationTokenSource(options.ShutdownTimeout, timeProvider);
 }
