@@ -4,4 +4,14 @@
         <IsDataSaverProject>true</IsDataSaverProject>
     </PropertyGroup>
 
+    <ItemGroup>
+        <PackageReference Include="JsonSchema.Net" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Одна копия правды: схема контракта лежит в docs/api и встраивается в сборку как есть. -->
+        <EmbeddedResource Include="..\..\..\docs\api\kafka-event.schema.json"
+                          LogicalName="Ktm.DataSaver.Core.Schemas.kafka-event.schema.json" />
+    </ItemGroup>
+
 </Project>
