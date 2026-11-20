@@ -66,7 +66,7 @@
 |---|---|---|
 | `DataSaver__Postgres__Port` | `5432` | порт |
 | `DataSaver__Postgres__SslMode` | `Require` | `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`; `Disable` - только для локальной разработки |
-| `DataSaver__Postgres__CommandTimeoutSeconds` | `30` | предел команды |
+| `DataSaver__Postgres__CommandTimeoutSeconds` | `10` | предел одной команды; запись пачки - три обращения к БД (начало транзакции, вставка, фиксация), каждое со своим пределом |
 | `DataSaver__Postgres__ConnectTimeoutSeconds` | `15` | предел подключения |
 | `DataSaver__Postgres__MinPoolSize` / `MaxPoolSize` | `1` / `10` | размер пула |
 | `DataSaver__Postgres__KeepAliveSeconds` | `30` | keepalive |
@@ -84,7 +84,7 @@
 | `DataSaver__Backoff__JitterFraction` | `0.2` | доля джиттера, 0..1 |
 | `DataSaver__Shutdown__TimeoutSeconds` | `30` | предел дописывания пачки от сигнала остановки |
 | `DataSaver__Health__Port` | `8080` | порт health-endpoint |
-| `DataSaver__Health__LiveStaleSeconds` | `60` | через сколько без отметки цикла liveness = 503; должен быть строго больше `Postgres__ConnectTimeoutSeconds + Postgres__CommandTimeoutSeconds` (иначе отказ запуска) |
+| `DataSaver__Health__LiveStaleSeconds` | `60` | через сколько без отметки цикла liveness = 503; должен быть строго больше `max(ceil(PollIntervalMs / 1000), Postgres__ConnectTimeoutSeconds + 3 * Postgres__CommandTimeoutSeconds, ceil(Kafka__ProducerMessageTimeoutMs / 1000))` (иначе отказ запуска, код 78): Consume, запись в БД и публикация в rejected - блокирующие ожидания, во время которых цикл не отмечается; между ними отметка есть, поэтому они не суммируются |
 
 ### Коэффициенты доверия источников (временно, до появления хранилища настроек)
 
@@ -166,7 +166,12 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
 
 - `GET /health/live` - 200, если цикл приёма отмечался не позже `Health__LiveStaleSeconds` назад. 503 при
   `consumer_fatal_error` (фатальная ошибка клиента Kafka, процесс при этом завершается) или `loop_stalled` (цикл завис).
-  **Недоступность БД и Kafka liveness не роняет** - перезапуск их не лечит.
+  **Недоступность БД и Kafka liveness не роняет** (кроме `Commit`, см. ниже) - перезапуск их не лечит. Условие: каждое
+  блокирующее ожидание (Consume - `PollIntervalMs`, запись в БД - `Connect + 3 x Command`, публикация в rejected) ограничено
+  таймаутом, который строго меньше `Health__LiveStaleSeconds`; это проверяется при старте (см. описание
+  `Health__LiveStaleSeconds` в п. 2). Допущение: `CommandTimeout` Npgsql действует на каждую из трёх команд записи отдельно
+  (по документации Npgsql; на стенде не замерено, 10.16). Исключение: `Commit` offset в Kafka таймаута не имеет
+  (решение Q1, п. 9): при зависшем брокере на `Commit` liveness может стать 503 `loop_stalled`.
 - `GET /health/ready` - 200 только если consumer получил назначение партиций, состояние не `Degraded`, брокер Kafka
   отвечает на запрос метаданных, БД отвечает на `SELECT 1`. Проверки брокера и БД ограничены 2 с; результат пробы брокера
   кэшируется на 5 с.
@@ -270,11 +275,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 | `0` | штатная остановка по SIGTERM |
 | `70` | фатальная ошибка клиента Kafka (`Error.IsFatal`): ретраи не помогают, процесс завершается после штатной остановки цикла; перед этим `/health/live` отвечает 503 `consumer_fatal_error`. Выход процесса перезапускает `restart: unless-stopped` |
 | `1` | ошибка цикла приёма, перехваченная и залогированная (`DataSaverWorker.cs:39-44`): лог `Critical` `Ingestion loop failed; the process is terminating`, затем процесс завершается этим кодом |
-
-Отказ запуска из-за ошибки настроек - необработанное исключение host с текстом вида
-`OptionsValidationException: DataSaver__Kafka__BootstrapServers is required.` в логе. Код выхода в этом случае при
-проверке образа на Docker 29 / Linux контейнере получился `139` (причина не подтверждена - **уточнить**; код сервисом
-не задаётся); контракта на этот код нет, ориентируйтесь на текст в логе.
+| `78` | ошибка конфигурации (`EX_CONFIG`): одна строка в stderr с именем настройки (например `DataSaver__Kafka__BootstrapServers is required.`), без стек-трейса и без значений секретов. Рестарт её не лечит: исправьте настройки; при `restart: unless-stopped` контейнер будет перезапускаться, пока их не исправят |
 
 При любом ненулевом выходе сначала смотрите лог последних строк `Critical` перед завершением.
 
@@ -293,8 +294,9 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 - Движок правил отбраковки, топик отбракованных правилами, содержимое проверок C5 и обработка ошибок данных C6 (в т.ч.
   `ktm.events.dlq`) - вне объёма этой версии (`tasks.md`, группа 10).
 - Коэффициент доверия источника задаётся переменными окружения (п. 2) и применяется после перезапуска.
-- При недоступном Kafka шум в логе большой: порядка 1700 строк в минуту через `ILogger` (`Kafka client error`) плюс
-  нативные строки librdkafka в stderr (в проверке со старта контейнера с несуществующим хостом). Лог контейнера в
-  `compose.yml` ограничен `json-file`, `max-size: 10m`, `max-file: 3` (до 30 МБ): при флуде старые строки вытесняются,
-  то есть более ранние `Critical`/`Error` могут пропасть из `docker compose logs` - при разборе инцидента снимайте лог
-  сразу. Если логи собирает внешняя система, закладывайте этот объём.
+- Логи при недоступном Kafka: ошибки клиента (`Kafka client error`) и нативные сообщения librdkafka (в `ILogger`, не в
+  stderr) идут с троттлингом - не чаще одной строки на причину в 30 с на тип сообщения. Объём в минуту на стенде после
+  троттлинга не измерялся (**уточнить**); он ограничен числом различных причин, а не частотой попыток переподключения.
+  Лог контейнера в `compose.yml` ограничен `json-file`, `max-size: 10m`, `max-file: 3` (до 30 МБ): старые строки
+  вытесняются, то есть более ранние `Critical`/`Error` могут пропасть из `docker compose logs` - при разборе инцидента
+  снимайте лог сразу.

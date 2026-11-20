@@ -32,6 +32,9 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
     /// <summary>Адаптер, нарушающий контракт: пустой опрос возвращается сразу, без ожидания таймаута.</summary>
     public bool ReturnNullImmediately { get; set; }
 
+    /// <summary>Consume не возвращается до отмены токена (замена зависшего клиента брокера).</summary>
+    public bool Hang { get; set; }
+
     public int ConsumeCalls { get; private set; }
 
     public int IdleCalls { get; private set; }
@@ -61,9 +64,19 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
         }
     }
 
-    public ValueTask<ConsumedMessage?> ConsumeAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    public async ValueTask<ConsumedMessage?> ConsumeAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         ConsumeCalls++;
+        if (Hang)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
+        return ConsumeCore(timeout);
+    }
+
+    private ConsumedMessage? ConsumeCore(TimeSpan timeout)
+    {
         var index = _queue.FindIndex(m => !_paused.Contains(new TopicPartitionKey(m.Topic, m.Partition)));
         if (index >= 0)
         {
@@ -71,7 +84,7 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
             _queue.RemoveAt(index);
             _delivered++;
             OnDelivered?.Invoke(_delivered);
-            return ValueTask.FromResult<ConsumedMessage?>(message);
+            return message;
         }
 
         IdleCalls++;
@@ -81,7 +94,7 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
         }
 
         OnIdle?.Invoke(IdleCalls);
-        return ValueTask.FromResult<ConsumedMessage?>(null);
+        return null;
     }
 
     public AssignmentChanges TakeAssignmentChanges()
@@ -215,6 +228,17 @@ internal sealed class Harness
     public readonly Microsoft.Extensions.Logging.Testing.FakeLogger<IngestionLoop> Logger = new();
 
     public Harness(int batchSize = 3, params IIngestionStage[] stages)
+        : this(batchSize, TimeSpan.FromMilliseconds(100), TimeSpan.FromHours(1), stages)
+    {
+    }
+
+    /// <summary>Цикл с заданными интервалом опроса и предельным ожиданием закрытия пачки по времени.</summary>
+    public Harness(TimeSpan pollInterval, TimeSpan batchMaxWait, int batchSize)
+        : this(batchSize, pollInterval, batchMaxWait, [])
+    {
+    }
+
+    private Harness(int batchSize, TimeSpan pollInterval, TimeSpan batchMaxWait, IIngestionStage[] stages)
     {
         Source = new FakeSource(Time, Log);
         Store = new FakeStore(Log);
@@ -228,9 +252,9 @@ internal sealed class Harness
             Committer,
             Handler,
             Notifier,
-            new Batcher<ConsumedMessage>(batchSize, TimeSpan.FromHours(1), Time),
+            new Batcher<ConsumedMessage>(batchSize, batchMaxWait, Time),
             new BackoffPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 2, 0, () => 0.5),
-            new IngestionLoopOptions(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30)),
+            new IngestionLoopOptions(pollInterval, TimeSpan.FromSeconds(30)),
             Time,
             Logger);
     }

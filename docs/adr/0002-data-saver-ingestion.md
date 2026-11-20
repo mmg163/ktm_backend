@@ -192,8 +192,10 @@ At-least-once + идемпотентная запись = эффект «ров�
   циклу, обработчики librdkafka не мутируют состояние цикла); `Pause/Resume` толерантны к отозванным партициям (не
   бросают, игнорируют отсутствующие); нефатальные ошибки брокера поглощаются адаптером (лог + метрика), наружу идут только
   фатальные.
-- `IRejectionPublisher`: публикация имеет собственный таймаут (иначе недоступный брокер блокирует цикл мимо backoff и
-  `ShutdownTimeout`); истечение таймаута - Transient.
+- `IRejectionPublisher`: предел ожидания один блокирующий вызов - `Kafka__ProducerMessageTimeoutMs` (`message.timeout.ms`
+  producer, умолчание 30 с); отдельного таймаута в адаптере нет. Истечение - Failure (Transient): цикл уходит в backoff,
+  пачка повторяется. Во время самого ожидания heartbeat не отмечается, поэтому `ProducerMessageTimeoutMs` участвует в
+  правиле согласованности `Health__LiveStaleSeconds` (D-11).
 - `IEventStore.WriteAsync`: атомарна на пачку (одна транзакция D-2): либо записана вся пачка, либо ничего.
 
 ### D-9. Масштабирование
@@ -231,7 +233,12 @@ At-least-once + идемпотентная запись = эффект «ров�
 `Kafka__SecurityProtocol`/`Sasl*` (на dev - PLAINTEXT, см. R-3), `Batch__MaxSize`, `Batch__MaxWaitMs`,
 `Backoff__InitialMs|MaxMs|Multiplier|JitterFraction`, `Postgres__CommandTimeoutSeconds`, `Shutdown__TimeoutSeconds`,
 `Health__Port`, `Health__LiveStaleSeconds`. Ошибка конфигурации - отказ запуска с понятным сообщением (без значений
-секретов). Шаблон `deploy/data-saver/.env.example` с заглушками в репозитории; `.env` в `.gitignore`.
+секретов), одна строка в stderr и код выхода 78 (`EX_CONFIG`) - в том числе для конфликта `SaslPassword`/`SaslPasswordFile` и
+нечитаемого файла секрета. Согласованность: `Health__LiveStaleSeconds` строго больше
+`max(ceil(PollIntervalMs / 1000), Postgres__ConnectTimeoutSeconds + 3 * Postgres__CommandTimeoutSeconds, ceil(Kafka__ProducerMessageTimeoutMs / 1000))`:
+одно ожидание Consume (до `PollIntervalMs`), запись в БД (подключение и три команды: начало транзакции, вставка, фиксация; `CommandTimeout` Npgsql действует на каждую отдельно - по документации, замер 10.16; умолчание `CommandTimeoutSeconds` = 10, итого 15 + 30 = 45 < 60) и публикация в rejected - блокирующие ожидания без отметки heartbeat;
+отметка ставится в начале итерации, после Consume (с учётом дожидания периода опроса) и после записи/публикации, поэтому длительности
+не суммируются и худший разрыв - максимум из трёх. Валидатор проверяет только три перечисленных ожидания. Вне правила и без проверки при старте остаются `Commit` offset (без предела, 10.9) и `IWriteFailureHandler` (10.14): на них liveness может стать 503 `loop_stalled`. Нарушение самого правила - отказ запуска. Шаблон `deploy/data-saver/.env.example` с заглушками в репозитории; `.env` в `.gitignore`.
 
 ### D-12. Тестовая стратегия
 

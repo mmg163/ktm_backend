@@ -25,7 +25,7 @@ public static class DataSaverServiceCollectionExtensions
         var root = configuration.GetSection(DataSaverOptions.SectionName);
 
         AddOptions<KafkaOptions>(services, root.GetSection("Kafka"), DataSaverChecks.Kafka)
-            .PostConfigure(ResolveSaslPasswordFile);
+            .PostConfigure(options => options.ResolveSaslPasswordFile());
         AddOptions<PostgresOptions>(services, root.GetSection("Postgres"), DataSaverChecks.Postgres);
         AddOptions<BatchOptions>(services, root.GetSection("Batch"), DataSaverChecks.Batch);
         AddOptions<BackoffOptions>(services, root.GetSection("Backoff"), DataSaverChecks.Backoff);
@@ -42,6 +42,8 @@ public static class DataSaverServiceCollectionExtensions
             kestrel.ListenAnyIP(health.Value.Port));
 
         services.AddSingleton(TimeProvider.System);
+        // Один троттлинг логов Kafka на процесс: consumer, producer и error-callback делят лимит на ключ.
+        services.AddSingleton(sp => new LogThrottle(sp.GetRequiredService<TimeProvider>(), LogThrottle.DefaultInterval));
         services.AddSingleton(sp => new DataSaverMetrics(sp.GetRequiredService<IMeterFactory>().Create(DataSaverMetrics.MeterName)));
 
         services.AddSingleton<IProcessTerminator>(sp => new HostProcessTerminator(
@@ -66,14 +68,16 @@ public static class DataSaverServiceCollectionExtensions
         services.AddSingleton<KafkaMessageSource>(sp => new KafkaMessageSource(
             sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
             sp.GetRequiredService<KafkaFatalErrorHandler>(),
-            sp.GetRequiredService<ILogger<KafkaMessageSource>>()));
+            sp.GetRequiredService<ILogger<KafkaMessageSource>>(),
+            sp.GetRequiredService<LogThrottle>()));
         services.AddSingleton<IMessageSource>(sp => new MeteredMessageSource(
             sp.GetRequiredService<KafkaMessageSource>(), sp.GetRequiredService<DataSaverMetrics>()));
         services.AddSingleton<IOffsetCommitter, KafkaOffsetCommitter>();
         services.AddSingleton<KafkaRejectionPublisher>(sp => new KafkaRejectionPublisher(
             sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
             sp.GetRequiredService<KafkaFatalErrorHandler>(),
-            sp.GetRequiredService<ILogger<KafkaRejectionPublisher>>()));
+            sp.GetRequiredService<ILogger<KafkaRejectionPublisher>>(),
+            sp.GetRequiredService<LogThrottle>()));
         services.AddSingleton<IRejectionPublisher>(sp => new ObservedRejectionPublisher(
             sp.GetRequiredService<KafkaRejectionPublisher>(),
             sp.GetRequiredService<DataSaverMetrics>(),
@@ -110,28 +114,5 @@ public static class DataSaverServiceCollectionExtensions
     {
         services.AddSingleton<IValidateOptions<T>>(new OptionsValidator<T>(check));
         return services.AddOptions<T>().Bind(section).ValidateOnStart();
-    }
-
-    private static void ResolveSaslPasswordFile(KafkaOptions options)
-    {
-        if (string.IsNullOrWhiteSpace(options.SaslPasswordFile))
-        {
-            return;
-        }
-
-        if (!string.IsNullOrEmpty(options.SaslPassword))
-        {
-            throw new InvalidOperationException("DataSaver__Kafka__SaslPassword and DataSaver__Kafka__SaslPasswordFile are mutually exclusive.");
-        }
-
-        try
-        {
-            options.SaslPassword = File.ReadAllText(options.SaslPasswordFile).TrimEnd('\r', '\n');
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Только имя настройки и путь; содержимое файла в сообщение не попадает.
-            throw new InvalidOperationException($"DataSaver__Kafka__SaslPasswordFile '{options.SaslPasswordFile}' cannot be read: {ex.GetType().Name}.");
-        }
     }
 }

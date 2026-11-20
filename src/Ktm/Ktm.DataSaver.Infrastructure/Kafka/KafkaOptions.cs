@@ -6,6 +6,8 @@ namespace Ktm.DataSaver.Infrastructure.Kafka;
 /// </summary>
 public sealed class KafkaOptions
 {
+    private string? _passwordReadFromFile;
+
     public const string SectionName = "Kafka";
 
     public string BootstrapServers { get; set; } = string.Empty;
@@ -38,10 +40,54 @@ public sealed class KafkaOptions
     /// <summary>Файл с паролем SASL (секрет из файла); взаимоисключающе с <see cref="SaslPassword"/>.</summary>
     public string? SaslPasswordFile { get; set; }
 
+    /// <summary>
+    /// Ошибка разрешения пароля SASL (конфликт с <see cref="SaslPassword"/> или нечитаемый файл); не биндится из
+    /// конфигурации (закрытый сеттер). Текст называет настройку и путь, но не значение секрета; сообщает её валидатор.
+    /// </summary>
+    public string? SaslPasswordError { get; private set; }
+
     public int SessionTimeoutMs { get; set; } = 45000;
 
     /// <summary>Предел ожидания подтверждения публикации отбракованного брокером.</summary>
     public int ProducerMessageTimeoutMs { get; set; } = 30000;
+
+    /// <summary>
+    /// Читает пароль SASL из <see cref="SaslPasswordFile"/>, если файл задан. Не бросает: ошибка записывается в
+    /// <see cref="SaslPasswordError"/>, чтобы её превратила в сообщение валидация настроек при старте. Конфликт
+    /// определяется по исходным значениям; читаемый пустой файл ошибкой чтения не считается.
+    /// </summary>
+    public void ResolveSaslPasswordFile()
+    {
+        SaslPasswordError = null;
+        if (_passwordReadFromFile is not null && SaslPassword == _passwordReadFromFile)
+        {
+            // Повторный вызов: пароль, подставленный из файла предыдущим вызовом, не считается заданным пользователем.
+            SaslPassword = null;
+        }
+
+        _passwordReadFromFile = null;
+        if (string.IsNullOrWhiteSpace(SaslPasswordFile))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(SaslPassword))
+        {
+            SaslPasswordError = "DataSaver__Kafka__SaslPassword and DataSaver__Kafka__SaslPasswordFile are mutually exclusive.";
+            return;
+        }
+
+        try
+        {
+            SaslPassword = File.ReadAllText(SaslPasswordFile).TrimEnd('\r', '\n');
+            _passwordReadFromFile = SaslPassword;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Только имя настройки и путь; содержимое файла в сообщение не попадает.
+            SaslPasswordError = $"DataSaver__Kafka__SaslPasswordFile '{SaslPasswordFile}' cannot be read: {ex.GetType().Name}.";
+        }
+    }
 
     public override string ToString() => $"Kafka({BootstrapServers}, topic={Topic}, group={GroupId})";
 }

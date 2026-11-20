@@ -17,7 +17,7 @@ public sealed class KafkaFatalErrorHandlerTests
     public void Non_fatal_error_does_not_terminate_process()
     {
         var terminator = new RecordingTerminator();
-        var handler = new KafkaFatalErrorHandler(terminator, NullLogger<KafkaFatalErrorHandler>.Instance);
+        var handler = new KafkaFatalErrorHandler(terminator, NullLogger<KafkaFatalErrorHandler>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
 
         var fatal = handler.Handle(new Error(ErrorCode.Local_Transport, "broker down", isFatal: false));
 
@@ -29,7 +29,7 @@ public sealed class KafkaFatalErrorHandlerTests
     public void Fatal_error_terminates_process_once_with_non_zero_code()
     {
         var terminator = new RecordingTerminator();
-        var handler = new KafkaFatalErrorHandler(terminator, NullLogger<KafkaFatalErrorHandler>.Instance);
+        var handler = new KafkaFatalErrorHandler(terminator, NullLogger<KafkaFatalErrorHandler>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
         var error = new Error(ErrorCode.Local_Fatal, "fenced", isFatal: true);
 
         Assert.True(handler.Handle(error));

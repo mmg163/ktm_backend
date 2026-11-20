@@ -28,7 +28,8 @@ public sealed class PostgresOptions
     /// <summary>Шифрование канала (docs/07 п. 7.3): по умолчанию Require; Disable - только для тестов и локальной разработки.</summary>
     public string SslMode { get; set; } = "Require";
 
-    public int CommandTimeoutSeconds { get; set; } = 30;
+    /// <summary>Предел одной команды. Запись пачки - три обращения (BeginTransaction, ExecuteNonQuery, Commit), см. проверку LiveStaleSeconds.</summary>
+    public int CommandTimeoutSeconds { get; set; } = 10;
 
     public int ConnectTimeoutSeconds { get; set; } = 15;
 
@@ -41,18 +42,18 @@ public sealed class PostgresOptions
     /// <summary>Проверяет настройки и собирает строку подключения (содержит пароль: в лог не выводить).</summary>
     public string BuildConnectionString()
     {
-        if (string.IsNullOrWhiteSpace(Host)) throw new InvalidOperationException("Postgres:Host is required.");
-        if (string.IsNullOrWhiteSpace(Database)) throw new InvalidOperationException("Postgres:Database is required.");
-        if (string.IsNullOrWhiteSpace(Username)) throw new InvalidOperationException("Postgres:Username is required.");
-        if (Port is < 1 or > 65535) throw new InvalidOperationException("Postgres:Port must be in range 1..65535.");
-        if (CommandTimeoutSeconds < 1) throw new InvalidOperationException("Postgres:CommandTimeoutSeconds must be positive.");
-        if (ConnectTimeoutSeconds < 1) throw new InvalidOperationException("Postgres:ConnectTimeoutSeconds must be positive.");
+        if (string.IsNullOrWhiteSpace(Host)) throw new InvalidOperationException("DataSaver__Postgres__Host is required.");
+        if (string.IsNullOrWhiteSpace(Database)) throw new InvalidOperationException("DataSaver__Postgres__Database is required.");
+        if (string.IsNullOrWhiteSpace(Username)) throw new InvalidOperationException("DataSaver__Postgres__Username is required.");
+        if (Port is < 1 or > 65535) throw new InvalidOperationException("DataSaver__Postgres__Port must be in range 1..65535.");
+        if (CommandTimeoutSeconds < 1) throw new InvalidOperationException("DataSaver__Postgres__CommandTimeoutSeconds must be positive.");
+        if (ConnectTimeoutSeconds < 1) throw new InvalidOperationException("DataSaver__Postgres__ConnectTimeoutSeconds must be positive.");
         if (MinPoolSize < 0 || MaxPoolSize < 1 || MinPoolSize > MaxPoolSize)
         {
-            throw new InvalidOperationException("Postgres:MinPoolSize and Postgres:MaxPoolSize must satisfy 0 <= MinPoolSize <= MaxPoolSize and MaxPoolSize >= 1.");
+            throw new InvalidOperationException("DataSaver__Postgres__MinPoolSize and DataSaver__Postgres__MaxPoolSize must satisfy 0 <= MinPoolSize <= MaxPoolSize and MaxPoolSize >= 1.");
         }
 
-        if (KeepAliveSeconds < 0) throw new InvalidOperationException("Postgres:KeepAliveSeconds must not be negative.");
+        if (KeepAliveSeconds < 0) throw new InvalidOperationException("DataSaver__Postgres__KeepAliveSeconds must not be negative.");
 
         var builder = new NpgsqlConnectionStringBuilder
         {
@@ -83,7 +84,7 @@ public sealed class PostgresOptions
         if (match is null)
         {
             throw new InvalidOperationException(
-                $"Postgres:SslMode '{SslMode}' is not supported. Allowed values: {string.Join(", ", AllowedSslModes)}.");
+                $"DataSaver__Postgres__SslMode '{SslMode}' is not supported. Allowed values: {string.Join(", ", AllowedSslModes)}.");
         }
 
         return Enum.Parse<Npgsql.SslMode>(match);
@@ -95,12 +96,12 @@ public sealed class PostgresOptions
         var hasFile = !string.IsNullOrWhiteSpace(PasswordFile);
         if (hasPassword && hasFile)
         {
-            throw new InvalidOperationException("Postgres:Password and Postgres:PasswordFile are mutually exclusive.");
+            throw new InvalidOperationException("DataSaver__Postgres__Password and DataSaver__Postgres__PasswordFile are mutually exclusive.");
         }
 
         if (!hasPassword && !hasFile)
         {
-            throw new InvalidOperationException("Postgres:Password or Postgres:PasswordFile is required.");
+            throw new InvalidOperationException("DataSaver__Postgres__Password or DataSaver__Postgres__PasswordFile is required.");
         }
 
         if (hasPassword) return Password!;
@@ -114,12 +115,12 @@ public sealed class PostgresOptions
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Сообщение содержит только путь к файлу, не его содержимое.
-            throw new InvalidOperationException($"Postgres:PasswordFile '{PasswordFile}' cannot be read: {ex.GetType().Name}.");
+            throw new InvalidOperationException($"DataSaver__Postgres__PasswordFile '{PasswordFile}' cannot be read: {ex.GetType().Name}.");
         }
 
         if (password.Length == 0)
         {
-            throw new InvalidOperationException($"Postgres:PasswordFile '{PasswordFile}' is empty.");
+            throw new InvalidOperationException($"DataSaver__Postgres__PasswordFile '{PasswordFile}' is empty.");
         }
 
         return password;
