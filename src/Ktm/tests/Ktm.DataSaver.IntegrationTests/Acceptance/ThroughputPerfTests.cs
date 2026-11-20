@@ -354,8 +354,8 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
 
         foreach (var line in resources) report.Line("docker stats: " + line);
         report.Line("DB: " + await DbSizeAsync(database));
-        var warnings = app.Logs.GetSnapshot().Count(r => r.Level >= LogLevel.Warning);
-        report.Line($"Log records >= Warning: {warnings}; loop terminations: {app.Terminator.Calls}");
+        report.WarningRecords(app.Logs.GetSnapshot());
+        report.Line($"Loop terminations: {app.Terminator.Calls}");
         report.Publish(output, "sustained");
 
         Assert.Equal(0, deliveryErrors);
@@ -434,7 +434,7 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
         var rowsAfter = await database.CountEventsAsync();
         report.Line($"ktm.events count(*) after drain: {rowsAfter} (seed {rowsBefore} + backlog {rowsAfter - rowsBefore}, expected {n})");
         report.Line("DB: " + await DbSizeAsync(database));
-        report.Line($"Log records >= Warning: {app.Logs.GetSnapshot().Count(r => r.Level >= LogLevel.Warning)}");
+        report.WarningRecords(app.Logs.GetSnapshot());
 
         report.Line(string.Empty);
         report.Line("== EXPLAIN (ANALYZE, BUFFERS) of a 500-row insert into the filled hypertable under role ktm_app (rolled back). NOT the text of NpgsqlEventStore.InsertEventsSql: rows come from generate_series instead of unnest of parameters, so the figure is a lower bound ==");
@@ -684,6 +684,17 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
             Line($"Effective config: DataSaver__Batch__MaxSize={batch.MaxSize}, DataSaver__Batch__MaxWaitMs={batch.MaxWaitMs}, DataSaver__PollIntervalMs={root.PollIntervalMs}, " +
                  $"DataSaver__Kafka__SessionTimeoutMs={kafkaOptions.SessionTimeoutMs}, DataSaver__Postgres__SslMode={postgresOptions.SslMode}, " +
                  $"DataSaver__Shutdown__TimeoutSeconds={shutdown.TimeoutSeconds}, Postgres pool max={postgresOptions.MaxPoolSize}");
+        }
+
+        /// <summary>Записи лога уровня Warning и выше: уровень, категория, сообщение и тип исключения (без стека и без значений конфигурации).</summary>
+        public void WarningRecords(IReadOnlyList<Microsoft.Extensions.Logging.Testing.FakeLogRecord> records)
+        {
+            var warnings = records.Where(r => r.Level >= LogLevel.Warning).ToList();
+            Line($"Log records >= Warning: {warnings.Count}");
+            foreach (var r in warnings)
+            {
+                Line($"  [{r.Level}] {r.Category}: {r.Message}" + (r.Exception is null ? string.Empty : $" (exception {r.Exception.GetType().Name}: {r.Exception.Message})"));
+            }
         }
 
         public void SaveRaw(string fileName, string text)
