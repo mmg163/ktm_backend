@@ -14,7 +14,7 @@
         <PackageVersion Include="Npgsql" Version="10.0.3" />
 
         <!-- Core: проверка по JSON Schema draft 2020-12 (docs/api/kafka-event.schema.json); MIT, без зависимостей от Kafka/Npgsql/ASP.NET -->
-        <PackageVersion Include="JsonSchema.Net" Version="9.7.0" />
+        <PackageVersion Include="LateApexEarlySpeed.Json.Schema" Version="5.0.0" />
 
         <!-- Тесты -->
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />

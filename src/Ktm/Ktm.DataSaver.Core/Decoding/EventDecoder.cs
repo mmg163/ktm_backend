@@ -215,12 +215,12 @@ public sealed partial class EventDecoder
         return text[..length];
     }
 
-    private static JsonSchemaNetValidator LoadEmbeddedSchema()
+    private static LateApexSchemaValidator LoadEmbeddedSchema()
     {
         using var stream = typeof(EventDecoder).Assembly.GetManifestResourceStream(SchemaResourceName)
                            ?? throw new InvalidOperationException($"Embedded resource '{SchemaResourceName}' not found.");
         using var reader = new StreamReader(stream);
-        return new JsonSchemaNetValidator(reader.ReadToEnd());
+        return new LateApexSchemaValidator(reader.ReadToEnd());
     }
 
     [GeneratedRegex(@"^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.(?<frac>[0-9]+))?Z\z")]
