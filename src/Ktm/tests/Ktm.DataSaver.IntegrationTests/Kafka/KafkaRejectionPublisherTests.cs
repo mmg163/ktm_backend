@@ -59,4 +59,31 @@ public sealed class KafkaRejectionPublisherTests(KafkaFixture kafka)
         Assert.False(result.IsSuccess);
         Assert.False(string.IsNullOrEmpty(result.Error));
     }
+
+    [Fact]
+    public async Task Message_is_routed_to_target_topic_when_specified_else_default()
+    {
+        var defaultTopic = await kafka.CreateTopicAsync("ktm.events.rejected");
+        var custom = await kafka.CreateTopicAsync("ktm.events.custom-rejected");
+        using var publisher = new KafkaRejectionPublisher(
+            kafka.Options("unused", "g", defaultTopic), kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance);
+
+        var result = await publisher.PublishAsync([Rejected("a"), Rejected("b", custom)], CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("a", Read(defaultTopic));
+        Assert.Equal("b", Read(custom));
+    }
+
+    private string Read(string topic)
+    {
+        using var consumer = new ConsumerBuilder<byte[], byte[]>(new ConsumerConfig
+        {
+            BootstrapServers = kafka.BootstrapServers,
+            GroupId = $"check-{Guid.NewGuid():N}",
+            AutoOffsetReset = AutoOffsetReset.Earliest,
+        }).Build();
+        consumer.Subscribe(topic);
+        return Encoding.UTF8.GetString(consumer.Consume(TimeSpan.FromSeconds(30))!.Message.Value);
+    }
 }

@@ -17,7 +17,12 @@ public sealed record AssignmentChanges(
 /// <summary>Порт чтения (4.1/4.2). Вызывается из одного потока цикла; обработчики ребаланса лишь копят изменения.</summary>
 public interface IMessageSource
 {
-    /// <summary>Одно сообщение либо null по таймауту. На паузе партиций сообщений не возвращает, но продолжает опрос группы.</summary>
+    /// <summary>
+    /// Одно сообщение либо null по таймауту. На паузе партиций сообщений не возвращает, но продолжает опрос группы.
+    /// Реализация может блокировать поток до <paramref name="timeout"/> и не реагирует на отмену внутри ожидания:
+    /// отзывчивость остановки и сессия группы ограничены <c>IngestionLoopOptions.PollInterval</c> (должен быть
+    /// существенно меньше session timeout/max.poll.interval).
+    /// </summary>
     ValueTask<ConsumedMessage?> ConsumeAsync(TimeSpan timeout, CancellationToken cancellationToken);
 
     /// <summary>Текущее назначение партиций.</summary>

@@ -9,6 +9,8 @@ namespace Ktm.DataSaver.Infrastructure.Kafka;
 /// <summary>
 /// Consumer по ADR-0002 D-1. Обработчики ребаланса лишь копят изменения; пауза и очистка сообщений отозванных
 /// партиций - дело цикла (<see cref="TakeAssignmentChanges"/>). Чтение и commit - из потока цикла.
+/// Dispose вызывать только после выхода <c>IngestionLoop.RunAsync</c>: Close() делает последний rebalance и не должен
+/// гоняться с Consume/Commit цикла.
 /// </summary>
 public sealed class KafkaMessageSource : IMessageSource, IDisposable
 {
@@ -18,6 +20,8 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private readonly Lock _gate = new();
     private readonly List<TopicPartitionKey> _assigned = [];
     private readonly List<TopicPartitionKey> _revoked = [];
+    private long _lastConsumeErrorLogTicks = long.MinValue;
+    private static readonly long ConsumeErrorLogIntervalTicks = (long)(TimeSpan.FromSeconds(30).TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
 
     public KafkaMessageSource(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaMessageSource> logger)
     {
@@ -53,7 +57,7 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
         {
             // Блокирующий poll ограничен таймаутом цикла; librdkafka обслуживает группу внутри Consume.
             var result = _consumer.Consume(timeout);
-            if (result is null || result.IsPartitionEOF)
+            if (result is null)
             {
                 return ValueTask.FromResult<ConsumedMessage?>(null);
             }
@@ -68,13 +72,20 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
         }
         catch (ConsumeException ex)
         {
-            if (_fatalHandler.Handle(ex.Error))
+            if (ex.Error.IsFatal)
             {
+                _fatalHandler.Handle(ex.Error);
                 throw;
             }
 
-            // Нефатальная ошибка чтения: клиент восстановится сам, цикл продолжает опрос.
-            _logger.LogError(ex, "Kafka consume error {Code}", ex.Error.Code);
+            // Нефатальная ошибка чтения: клиент восстановится сам, цикл продолжает опрос; лог - не чаще раза в 30 с.
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastConsumeErrorLogTicks == long.MinValue || now - _lastConsumeErrorLogTicks >= ConsumeErrorLogIntervalTicks)
+            {
+                _lastConsumeErrorLogTicks = now;
+                _logger.LogError("Kafka consume error {Code}: {Reason} (repeats are not logged for 30 s)", ex.Error.Code, ex.Error.Reason);
+            }
+
             return ValueTask.FromResult<ConsumedMessage?>(null);
         }
     }
@@ -95,17 +106,43 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
         }
     }
 
-    public void Pause(IReadOnlyCollection<TopicPartitionKey> partitions)
+    public void Pause(IReadOnlyCollection<TopicPartitionKey> partitions) =>
+        Apply(partitions, _consumer.Pause, "pause");
+
+    public void Resume(IReadOnlyCollection<TopicPartitionKey> partitions) =>
+        Apply(partitions, _consumer.Resume, "resume");
+
+    /// <summary>
+    /// Pause/Resume толерантны к партициям, которых уже нет в назначении (назначение и отзыв в одном Consume, D-8а):
+    /// сначала пачкой, при отказе - по одной; отказ по отдельной партиции - Warning, не исключение.
+    /// </summary>
+    private void Apply(IReadOnlyCollection<TopicPartitionKey> partitions, Action<IEnumerable<TopicPartition>> action, string operation)
     {
-        if (partitions.Count > 0) _consumer.Pause(ToPartitions(partitions));
+        if (partitions.Count == 0) return;
+        try
+        {
+            action(ToPartitions(partitions));
+        }
+        catch (Exception ex) when (ex is KafkaException or InvalidOperationException)
+        {
+            foreach (var partition in ToPartitions(partitions))
+            {
+                try
+                {
+                    action([partition]);
+                }
+                catch (Exception inner) when (inner is KafkaException or InvalidOperationException)
+                {
+                    _logger.LogWarning("Kafka {Operation} skipped for {Topic}[{Partition}]: {Reason}", operation, partition.Topic, partition.Partition.Value, inner.Message);
+                }
+            }
+        }
     }
 
-    public void Resume(IReadOnlyCollection<TopicPartitionKey> partitions)
-    {
-        if (partitions.Count > 0) _consumer.Resume(ToPartitions(partitions));
-    }
-
-    /// <summary>Синхронный commit (для <see cref="KafkaOffsetCommitter"/>); offsets уже со смещением +1.</summary>
+    /// <summary>
+    /// Синхронный commit (для <see cref="KafkaOffsetCommitter"/>); offsets уже со смещением +1. Таймаута нет: предел
+    /// остановки (ShutdownTimeout, D-8) этот вызов не прервёт; поведение при недоступном брокере проверят 7.5/7.6.
+    /// </summary>
     internal void Commit(IReadOnlyList<PartitionOffset> offsets) =>
         _consumer.Commit(offsets.Select(o => new TopicPartitionOffset(o.Topic, o.Partition, o.Offset)));
 

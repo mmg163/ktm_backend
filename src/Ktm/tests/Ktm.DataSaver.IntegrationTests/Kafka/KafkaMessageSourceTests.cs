@@ -35,8 +35,8 @@ public sealed class KafkaMessageSourceTests(KafkaFixture kafka)
         var raw = await kafka.CreateTopicAsync("ktm.events.raw");
         var rejected = await kafka.CreateTopicAsync("ktm.events.rejected");
         await kafka.ProduceAsync(raw, "skud:1", """{"source":"skud"}""");
-        await kafka.ProduceAsync(raw, "video:1", """{"source":"video"}""");
-        await kafka.ProduceAsync(raw, "1c_do:1", """{"source":"1c_do"}""");
+        await kafka.ProduceAsync(raw, "cv:1", """{"source":"cv"}""");
+        await kafka.ProduceAsync(raw, "1c-do:1", """{"source":"1c-do"}""");
         await kafka.ProduceAsync(rejected, "x", "rejected-body");
 
         using var source = NewSource(raw, $"g-{Guid.NewGuid():N}");
@@ -45,7 +45,7 @@ public sealed class KafkaMessageSourceTests(KafkaFixture kafka)
 
         Assert.Equal(3, messages.Count);
         Assert.All(messages, m => Assert.Equal(raw, m.Topic));
-        Assert.Equal(["skud:1", "video:1", "1c_do:1"], messages.Select(m => System.Text.Encoding.UTF8.GetString(m.Key.Span)));
+        Assert.Equal(["skud:1", "cv:1", "1c-do:1"], messages.Select(m => System.Text.Encoding.UTF8.GetString(m.Key.Span)));
         Assert.Null(extra);
     }
 
@@ -131,5 +131,19 @@ public sealed class KafkaMessageSourceTests(KafkaFixture kafka)
 
         Assert.Null(whilePaused);
         Assert.Single(afterResume);
+    }
+
+    [Fact]
+    public async Task Pause_and_resume_tolerate_partitions_missing_from_assignment()
+    {
+        var raw = await kafka.CreateTopicAsync("ktm.events.raw");
+        using var source = NewSource(raw, $"g-{Guid.NewGuid():N}");
+        var missing = new TopicPartitionKey(raw, 7);
+
+        var pause = Record.Exception(() => source.Pause([missing]));
+        var resume = Record.Exception(() => source.Resume([missing]));
+
+        Assert.Null(pause);
+        Assert.Null(resume);
     }
 }
