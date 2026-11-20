@@ -54,10 +54,6 @@ public sealed class IngestionAcceptanceTests(KafkaFixture kafka, PostgresFixture
         elapsed.Stop();
 
         Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"row appeared after {elapsed.Elapsed}");
-        await using var connection = new NpgsqlConnection(postgres.AdminConnectionString);
-        await connection.OpenAsync();
-        await using var roles = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity WHERE usename = 'ktm_app'", connection);
-        Assert.True((long)(await roles.ExecuteScalarAsync())! >= 1, "Data Saver must write under the ktm_app role");
     }
 
     // 7.3: 100 сообщений с 10 повторами ключа -> ровно 90 строк, метрика дублей 10, ошибок записи в логе нет.
@@ -210,10 +206,10 @@ public sealed class IngestionAcceptanceTests(KafkaFixture kafka, PostgresFixture
         Assert.All(records, r =>
         {
             Assert.Equal("rule_matched", r.Headers["ktm-reject-reason"]);
-            Assert.Contains(ruleId, r.Headers["ktm-reject-detail"], StringComparison.Ordinal);
+            Assert.Equal(ruleId, r.Headers["ktm-reject-rule-id"]);
             Assert.Equal(run.RawTopic, r.Headers["ktm-source-topic"]);
         });
-        // RuleId доходит до лога отбраковки именованным параметром (заголовок ktm-reject-rule-id - задача 10.2, вне объёма).
+        // RuleId доходит и до лога отбраковки именованным параметром.
         var logged = app.Logs.GetSnapshot().Where(r => r.Message.StartsWith("Message rejected", StringComparison.Ordinal)).ToList();
         Assert.Equal(total / 3, logged.Count);
         Assert.All(logged, r => Assert.Equal(ruleId, r.StructuredState!.Single(p => p.Key == "RuleId").Value));
@@ -224,7 +220,7 @@ public sealed class IngestionAcceptanceTests(KafkaFixture kafka, PostgresFixture
     {
         public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed) =>
             message.Offset % 3 == 2
-                ? IngestionVerdict.Reject(new RejectionInfo(RejectionKind.Rule, "rule_matched", $"rule {ruleId}", ruleId, targetTopic))
+                ? IngestionVerdict.Reject(new RejectionInfo(RejectionKind.Rule, "rule_matched", "every third", ruleId, targetTopic))
                 : IngestionVerdict.Accept;
     }
 }

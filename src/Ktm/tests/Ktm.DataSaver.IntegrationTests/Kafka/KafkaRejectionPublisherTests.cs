@@ -44,6 +44,7 @@ public sealed class KafkaRejectionPublisherTests(KafkaFixture kafka)
         Assert.Equal("ktm.events.raw", Header("ktm-source-topic"));
         Assert.Equal("3", Header("ktm-source-partition"));
         Assert.Equal("42", Header("ktm-source-offset"));
+        Assert.False(message.Headers.TryGetLastBytes("ktm-reject-rule-id", out _), "malformed_json has no rule id header");
     }
 
     [Fact]

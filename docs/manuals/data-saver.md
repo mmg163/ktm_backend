@@ -220,6 +220,7 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
 | `ktm-reject-reason` | `malformed_json`, `unknown_schema_version`, `invalid_schema` |
 | `ktm-reject-detail` | подробности причины |
 | `ktm-source-topic`, `ktm-source-partition`, `ktm-source-offset` | координаты исходного сообщения |
+| `ktm-reject-rule-id` | необязательный: идентификатор правила, отбраковавшего сообщение (в топике `rejected` для трёх причин выше отсутствует; появляется в топиках отбракованных правилами) |
 
 Чтение (пример для брокера из контейнера `apache/kafka`; путь к утилитам и способ доступа - **уточнить** на стенде):
 

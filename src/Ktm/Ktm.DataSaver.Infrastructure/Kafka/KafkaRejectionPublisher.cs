@@ -92,7 +92,10 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
         _producer.Dispose();
     }
 
-    private static Message<byte[], byte[]> ToMessage(RejectedMessage r)
+    internal const string RuleIdHeader = "ktm-reject-rule-id";
+    internal const int RuleIdMaxLength = 128;
+
+    internal static Message<byte[], byte[]> ToMessage(RejectedMessage r)
     {
         var message = r.Message;
         var result = new Message<byte[], byte[]>
@@ -108,6 +111,12 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
             },
         };
 
+        var ruleId = NormalizeRuleId(r.Info.RuleId);
+        if (ruleId is not null)
+        {
+            result.Headers.Add(RuleIdHeader, Utf8(ruleId));
+        }
+
         // Пустой ключ = ключа не было (consumer отдаёт null как пустой массив): сохраняем семантику.
         if (!message.Key.IsEmpty)
         {
@@ -115,6 +124,27 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Идентификатор правила для заголовка: trim, не длиннее 128 символов (без разрыва суррогатной пары);
+    /// null, если идентификатора нет или он состоит из пробелов.
+    /// </summary>
+    internal static string? NormalizeRuleId(string? ruleId)
+    {
+        var value = ruleId?.Trim();
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+
+        if (value.Length > RuleIdMaxLength)
+        {
+            var length = char.IsHighSurrogate(value[RuleIdMaxLength - 1]) ? RuleIdMaxLength - 1 : RuleIdMaxLength;
+            value = value[..length].TrimEnd();
+        }
+
+        return value.Length == 0 ? null : value;
     }
 
     private static byte[] Utf8(string value) => Encoding.UTF8.GetBytes(value);
