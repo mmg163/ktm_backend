@@ -272,6 +272,8 @@ public sealed class IngestionLoop(
             try
             {
                 await store.WriteAsync(items.Select(i => i.Event).ToList(), IoToken);
+                // Успешная запись - признак жизни цикла: медленная, но завершившаяся запись не должна давать ложный loop_stalled.
+                Touch();
                 return true;
             }
             catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
@@ -403,6 +405,7 @@ public sealed class IngestionLoop(
 
             if (outcome.IsSuccess)
             {
+                Touch();
                 return true;
             }
 
