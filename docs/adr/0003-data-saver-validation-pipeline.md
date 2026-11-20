@@ -84,7 +84,9 @@ RFC 3339; усечение до микросекунд делает декоде
 - `IEventValidator.Validate(ParsedEvent) -> ValidationResult { Accept | Reject(reason, detail) }` (C5). Заглушка -
   `AcceptAllEventValidator`. Содержимое правила (неизвестные `eventType`, окно `occurredAt`) - в C5.
 - `IWriteFailureHandler.HandleAsync(WriteFailureContext) -> WriteFailureDecision { Retry | DeadLetter(items) }` (C6),
-  вызывается **только для класса Data** (ADR-0002, D-7). Заглушка - `BlockingWriteFailureHandler`: решение `Retry`
+  вызывается **только для класса Data** (ADR-0002, D-7). Контракт: `DeadLetter(items)` возвращается
+  **только после durable-сохранения этих сообщений**; лишь затем цикл коммитит их offset. `Retry` блокирует партицию
+  (лог Error, backoff, `Degraded`). Заглушка - `BlockingWriteFailureHandler`: решение `Retry`
   (пауза, `Degraded`, лог Error на каждой попытке). Заглушка ничего не теряет и ничего не пропускает, но блокирует
   партицию до устранения причины; это сознательный «безопасный по умолчанию» выбор до появления C6. Топик
   `ktm.events.dlq` заглушка не использует.

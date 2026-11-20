@@ -61,10 +61,10 @@
 ## 6. Host: сборка сервиса, health, остановка
 
 - [ ] 6.1 Опции `DataSaver__*` (D-11 ADR-0002) с `ValidateOnStart`, поддержка `PasswordFile`; проверка — unit: отсутствие `Kafka__BootstrapServers` даёт ошибку с именем настройки без значений секретов; значения по умолчанию соответствуют ADR
-- [ ] 6.2 `DataSaverWorker` (BackgroundService) и composition root; метрики `System.Diagnostics.Metrics` (прочитано, записано, дубли, корректировки, отбраковано по причинам, длительность и размер пачки, повторы, состояние); проверка — интеграционный: после прогона счётчики равны ожидаемым (записано 90, дублей 10)
+- [ ] 6.2 `DataSaverWorker` (BackgroundService) и composition root; метрики цикла, `System.Diagnostics.Metrics` (прочитано, записано, дубли, корректировки, отбраковано по причинам, длительность и размер пачки, повторы, состояние); проверка — интеграционный: после прогона счётчики равны ожидаемым (записано 90, дублей 10)
 - [ ] 6.3 Health: Kestrel, `GET /health/live`, `GET /health/ready` по D-10; проверка — интеграционный: штатно оба 200; БД остановлена — `ready` 503, `live` 200; консьюмер без назначения — `ready` 503; ответы не содержат строк подключения
 - [ ] 6.4 Graceful shutdown: `HostOptions.ShutdownTimeout` согласован с `Shutdown__TimeoutSeconds`, порядок «дописать пачку -> commit -> Close -> flush producer»; проверка — интеграционный (см. 7.5)
-- [ ] 6.5 Структурные логи (`topic`, `partition`, `offset`, `source`, `sourceEventId`), без тел сообщений на уровне Information, лог Error при отбраковке и по `IAdminNotifier` (заглушка — лог + счётчик); проверка — unit/интеграционный на содержимое записей лога при отбраковке
+- [ ] 6.5 Структурные поля в логах цикла и координаты пачки при ошибке записи (`topic`, `partition`, `offset`, `source`, `sourceEventId`), без тел сообщений на уровне Information, лог Error при отбраковке и по `IAdminNotifier` (заглушка — лог + счётчик); проверка — unit/интеграционный на содержимое записей лога при отбраковке
 
 ## 7. Интеграционные тесты (Testcontainers: apache/kafka + timescale/timescaledb pg16)
 
