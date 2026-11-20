@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
 using Ktm.DataSaver.Core.Ingestion;
@@ -22,6 +23,7 @@ internal sealed class DataSaverInstance : IAsyncDisposable
     private readonly DataSaverAppFactory _factory;
     private readonly Meter _meter = new(DataSaverMetrics.MeterName);
     private int _disposed;
+    private int _stopped;
 
     private DataSaverInstance(TestRun run, Action<Dictionary<string, string?>>? tune, Action<IServiceCollection>? services)
     {
@@ -68,15 +70,26 @@ internal sealed class DataSaverInstance : IAsyncDisposable
         return response.StatusCode;
     }
 
-    /// <summary>Штатная остановка (дописать пачку, commit, Close, flush) и освобождение ресурсов теста.</summary>
+    /// <summary>
+    /// Штатная остановка host (порядок D-8: дописать пачку, commit, Close, flush); счётчики и логи остаются доступными.
+    /// Возвращает время остановки. Повторный вызов ничего не делает.
+    /// </summary>
+    public async Task<TimeSpan> StopAsync(CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.Exchange(ref _stopped, 1) != 0) return TimeSpan.Zero;
+        var elapsed = Stopwatch.StartNew();
+        Client.Dispose();
+        await Services.GetRequiredService<IHost>().StopAsync(cancellationToken);
+        return elapsed.Elapsed;
+    }
+
+    /// <summary>Останавливает (если ещё не остановлен) и освобождает ресурсы теста.</summary>
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        Client.Dispose();
         using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
         {
-            // Явная штатная остановка host: порядок D-8 (дописать пачку, commit, Close, flush) выполняет DataSaverWorker.
-            await Services.GetRequiredService<IHost>().StopAsync(cts.Token);
+            await StopAsync(cts.Token);
         }
 
         await _factory.DisposeAsync();

@@ -16,7 +16,8 @@ internal sealed class StoppableDatabase : IAsyncDisposable, IDatabaseEndpoint
 
     private StoppableDatabase(PostgreSqlContainer container) => _container = container;
 
-    public string AdminConnectionString => _container.GetConnectionString();
+    // Без пула: соединения администратора теста не должны переживать остановку контейнера мёртвыми в пуле.
+    public string AdminConnectionString => new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Pooling = false }.ConnectionString;
 
     public string AppConnectionString => DatabaseProvisioner.ConnectionFor(AdminConnectionString, "ktm_app", DatabaseProvisioner.AppPassword);
 
