@@ -47,7 +47,7 @@ public sealed class KafkaFixture : IAsyncLifetime
     };
 
     public KafkaFatalErrorHandler NewFatalHandler() =>
-        new(new NoopTerminator(), NullLogger<KafkaFatalErrorHandler>.Instance);
+        new(new NoopTerminator(), NullLogger<KafkaFatalErrorHandler>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
 
     private sealed class NoopTerminator : IProcessTerminator
     {

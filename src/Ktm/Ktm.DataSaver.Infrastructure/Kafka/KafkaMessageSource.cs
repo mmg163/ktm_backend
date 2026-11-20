@@ -26,17 +26,19 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private readonly string _topic;
     private IAdminClient? _admin;
     private int _disposed;
-    private long _lastConsumeErrorLogTicks = long.MinValue;
-    private static readonly long ConsumeErrorLogIntervalTicks = (long)(TimeSpan.FromSeconds(30).TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+    private readonly LogThrottle _throttle;
 
-    public KafkaMessageSource(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaMessageSource> logger)
+    public KafkaMessageSource(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaMessageSource> logger, LogThrottle throttle)
     {
         _fatalHandler = fatalHandler;
         _logger = logger;
+        _throttle = throttle;
         _topic = options.Topic;
+        var nativeLog = new KafkaNativeLogBridge(logger, throttle);
 
         _consumer = new ConsumerBuilder<byte[], byte[]>(BuildConfig(options))
             .SetErrorHandler((_, error) => fatalHandler.Handle(error))
+            .SetLogHandler((_, message) => nativeLog.Handle(message))
             .SetPartitionsAssignedHandler((_, partitions) => OnAssigned(partitions))
             .SetPartitionsRevokedHandler((_, partitions) => OnRevoked(partitions.Select(p => p.TopicPartition)))
             .SetPartitionsLostHandler((_, partitions) => OnRevoked(partitions.Select(p => p.TopicPartition)))
@@ -128,11 +130,10 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
             }
 
             // Нефатальная ошибка чтения: клиент восстановится сам, цикл продолжает опрос; лог - не чаще раза в 30 с.
-            var now = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (_lastConsumeErrorLogTicks == long.MinValue || now - _lastConsumeErrorLogTicks >= ConsumeErrorLogIntervalTicks)
+            if (_throttle.TryPass("consume:" + ex.Error.Code, out var suppressed))
             {
-                _lastConsumeErrorLogTicks = now;
-                _logger.LogError("Kafka consume error {Code}: {Reason} (repeats are not logged for 30 s)", ex.Error.Code, ex.Error.Reason);
+                _logger.LogError("Kafka consume error {Code}: {Reason} (suppressed since last: {Suppressed}; repeats are not logged for 30 s)",
+                    ex.Error.Code, ex.Error.Reason, suppressed);
             }
 
             return ValueTask.FromResult<ConsumedMessage?>(null);

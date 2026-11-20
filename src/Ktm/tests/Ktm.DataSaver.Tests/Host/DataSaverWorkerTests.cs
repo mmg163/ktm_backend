@@ -23,11 +23,12 @@ public class DataSaverWorkerTests
         var logger = new FakeLogger<DataSaverWorker>();
         // Клиенты Kafka создаются без соединения с брокером: цикл работает на fake-порте, им worker лишь закрывает ресурсы.
         var options = new KafkaOptions { BootstrapServers = "localhost:1" };
-        var handler = new KafkaFatalErrorHandler(terminator, new FakeLogger<KafkaFatalErrorHandler>());
+        var throttle = new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval);
+        var handler = new KafkaFatalErrorHandler(terminator, new FakeLogger<KafkaFatalErrorHandler>(), throttle);
         var worker = new DataSaverWorker(
             h.Loop,
-            new KafkaMessageSource(options, handler, new FakeLogger<KafkaMessageSource>()),
-            new KafkaRejectionPublisher(options, handler, new FakeLogger<KafkaRejectionPublisher>()),
+            new KafkaMessageSource(options, handler, new FakeLogger<KafkaMessageSource>(), throttle),
+            new KafkaRejectionPublisher(options, handler, new FakeLogger<KafkaRejectionPublisher>(), throttle),
             new DataSaverMetrics(meter),
             terminator,
             logger);
