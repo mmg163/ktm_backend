@@ -278,7 +278,8 @@ public sealed class IngestionLoop(
             {
                 await store.WriteAsync(items.Select(i => i.Event).ToList(), IoToken);
                 // Во время самой записи отметки нет: от ложного loop_stalled защищает валидатор
-                // (LiveStaleSeconds > max(Poll, Connect + Command, ProducerMessageTimeout)).
+                // (LiveStaleSeconds > max(Poll, Connect + 3 * Command, ProducerMessageTimeout);
+                // запись = BeginTransaction + ExecuteNonQuery + Commit, CommandTimeout на каждое обращение).
                 // Touch после записи нужен, чтобы ожидания записи и публикации не суммировались в одно окно без отметки.
                 Touch();
                 return true;

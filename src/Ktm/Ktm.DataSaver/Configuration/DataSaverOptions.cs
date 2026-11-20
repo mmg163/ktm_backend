@@ -159,10 +159,11 @@ internal static class DataSaverChecks
 
     /// <summary>
     /// Три блокирующих ожидания цикла, во время которых heartbeat не отмечается: Consume (до PollInterval), запись пачки
-    /// в БД (Connect + Command секунд) и публикация в rejected (до ProducerMessageTimeoutMs). После каждого из них цикл
-    /// отмечается (Touch), поэтому ожидания не суммируются - худший случай максимум из трёх. Commit - исключение: отметки
-    /// вокруг него нет. Если liveness-порог не больше этого максимума, штатно долгое ожидание убило бы процесс
-    /// перезапуском, который его не лечит.
+    /// в БД (Connect + 3 * Command секунд) и публикация в rejected (до ProducerMessageTimeoutMs). Запись - это
+    /// BeginTransaction, ExecuteNonQuery и Commit: три обращения к БД, и CommandTimeout действует на каждое (допущение по
+    /// документации Npgsql, замера нет, tasks 10.16). После каждого ожидания цикл отмечается (Touch), поэтому они не
+    /// суммируются - худший случай максимум из трёх. Commit offset в Kafka - исключение: отметки вокруг него нет. Если
+    /// liveness-порог не больше этого максимума, штатно долгое ожидание убило бы процесс перезапуском, который его не лечит.
     /// </summary>
     public static IEnumerable<string> LiveStale(HealthOptions health, PostgresOptions postgres, KafkaOptions kafka, int pollIntervalMs)
     {
@@ -174,14 +175,14 @@ internal static class DataSaverChecks
         }
 
         var pollWait = (long)Math.Ceiling(pollIntervalMs / 1000.0);
-        var databaseWait = (long)postgres.ConnectTimeoutSeconds + postgres.CommandTimeoutSeconds;
+        var databaseWait = (long)postgres.ConnectTimeoutSeconds + 3L * postgres.CommandTimeoutSeconds;
         var publishWait = (long)Math.Ceiling(kafka.ProducerMessageTimeoutMs / 1000.0);
         var worst = Math.Max(pollWait, Math.Max(databaseWait, publishWait));
         if (worst >= health.LiveStaleSeconds)
         {
             yield return "DataSaver__Health__LiveStaleSeconds must be greater than the longest blocking wait of the loop: " +
                          $"max(ceil(DataSaver__PollIntervalMs / 1000) = {pollWait} s, " +
-                         $"DataSaver__Postgres__ConnectTimeoutSeconds + DataSaver__Postgres__CommandTimeoutSeconds = {databaseWait} s, " +
+                         $"DataSaver__Postgres__ConnectTimeoutSeconds + 3 * DataSaver__Postgres__CommandTimeoutSeconds = {databaseWait} s, " +
                          $"ceil(DataSaver__Kafka__ProducerMessageTimeoutMs / 1000) = {publishWait} s) = {worst} s. " +
                          "Consume, a database write and a publish to the rejected topic are blocking waits that do not touch the liveness heartbeat.";
         }
@@ -218,7 +219,10 @@ internal static class DataSaverChecks
 }
 
 /// <summary>Согласованность <see cref="HealthOptions"/> с таймаутами БД: проверка нескольких секций при старте.</summary>
-internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> postgres, IOptions<KafkaOptions> kafka, IOptions<DataSaverOptions> root) : IValidateOptions<HealthOptions>
+internal sealed class LiveStaleConsistencyValidator(
+    IOptions<PostgresOptions> postgres,
+    IOptions<KafkaOptions> kafka,
+    IOptions<DataSaverOptions> root) : IValidateOptions<HealthOptions>
 {
     public ValidateOptionsResult Validate(string? name, HealthOptions options)
     {

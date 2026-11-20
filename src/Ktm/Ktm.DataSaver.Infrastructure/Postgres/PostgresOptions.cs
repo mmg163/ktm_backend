@@ -28,7 +28,8 @@ public sealed class PostgresOptions
     /// <summary>Шифрование канала (docs/07 п. 7.3): по умолчанию Require; Disable - только для тестов и локальной разработки.</summary>
     public string SslMode { get; set; } = "Require";
 
-    public int CommandTimeoutSeconds { get; set; } = 30;
+    /// <summary>Предел одной команды. Запись пачки - три обращения (BeginTransaction, ExecuteNonQuery, Commit), см. проверку LiveStaleSeconds.</summary>
+    public int CommandTimeoutSeconds { get; set; } = 10;
 
     public int ConnectTimeoutSeconds { get; set; } = 15;
 

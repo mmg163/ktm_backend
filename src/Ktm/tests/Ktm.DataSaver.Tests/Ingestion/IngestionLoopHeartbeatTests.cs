@@ -116,6 +116,69 @@ public sealed class IngestionLoopHeartbeatTests
     }
 
     [Fact]
+    public async Task BackoffPauseCutShortByStop_ThenRetriedWrite_LivenessStaysHealthy()
+    {
+        // Сбой записи, пауза backoff 1 с с опросом Consume (Poll 59 с), на ней приходит сигнал остановки. Отметка после
+        // Consume в паузе - единственная до повторной записи; без неё запись, длящаяся 59,5 с, дала бы 60,5 с без отметки.
+        var h = new Harness(TimeSpan.FromSeconds(LiveStaleSeconds - 1), TimeSpan.FromHours(1), batchSize: 1);
+        var health = Evaluator(h);
+        HealthResult? duringRetriedWrite = null;
+        h.Source.Enqueue(Harness.Valid(0, 0));
+        h.Store.Fail = call => call == 1 ? new InvalidOperationException("transient") : null;
+        h.Store.OnCall = call =>
+        {
+            if (call != 2)
+            {
+                return;
+            }
+
+            h.Time.Advance(TimeSpan.FromSeconds(59.5));
+            duringRetriedWrite = health.Live();
+        };
+        h.Source.OnIdle = _ =>
+        {
+            if (h.Loop.State == IngestionState.Degraded)
+            {
+                h.Stop.Cancel();
+            }
+        };
+
+        await h.RunAsync();
+
+        Assert.NotNull(duringRetriedWrite);
+        Assert.True(duringRetriedWrite.IsHealthy, $"liveness is {duringRetriedWrite.Reason} during the retried write");
+    }
+
+    [Fact]
+    public async Task AdapterReturningNullImmediately_ThenWrite_HeartbeatIsTakenAfterTheIdleGuardWait()
+    {
+        // Первое сообщение запускает отсчёт закрытия пачки (59 с). Адаптер возвращает null сразу, защита добирает 59 с
+        // ожидания сама, затем запись 59 с. Отметка до защиты оставила бы между ней и записью 118 с без отметки.
+        var wait = TimeSpan.FromSeconds(LiveStaleSeconds - 1);
+        var h = new Harness(wait, wait, batchSize: 100);
+        var health = Evaluator(h);
+        HealthResult? afterWrite = null;
+        h.Source.ReturnNullImmediately = true;
+        h.Source.Enqueue(Harness.Valid(0, 0));
+        h.Store.OnCall = _ =>
+        {
+            h.Time.Advance(wait);
+            afterWrite = health.Live();
+            h.Stop.Cancel();
+        };
+
+        var run = h.RunAsync();
+        // Часы двигаем, когда защита уже ждёт на таймере: опрос вернул null, реальная пауза даёт ей войти в ожидание.
+        Assert.True(SpinWait.SpinUntil(() => h.Source.IdleCalls > 0, TimeSpan.FromSeconds(10)), "idle poll did not happen");
+        await Task.Delay(200);
+        h.Time.Advance(wait);
+        await run;
+
+        Assert.NotNull(afterWrite);
+        Assert.True(afterWrite.IsHealthy, $"liveness is {afterWrite.Reason} after write");
+    }
+
+    [Fact]
     public async Task HangingConsume_LivenessReportsLoopStalled()
     {
         var h = new Harness();

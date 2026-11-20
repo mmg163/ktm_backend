@@ -6,6 +6,8 @@ namespace Ktm.DataSaver.Infrastructure.Kafka;
 /// </summary>
 public sealed class KafkaOptions
 {
+    private string? _passwordReadFromFile;
+
     public const string SectionName = "Kafka";
 
     public string BootstrapServers { get; set; } = string.Empty;
@@ -43,8 +45,6 @@ public sealed class KafkaOptions
     /// конфигурации (закрытый сеттер). Текст называет настройку и путь, но не значение секрета; сообщает её валидатор.
     /// </summary>
     public string? SaslPasswordError { get; private set; }
-
-    private string? _passwordReadFromFile;
 
     public int SessionTimeoutMs { get; set; } = 45000;
 
