@@ -83,6 +83,22 @@ Testcontainers) v3 не даёт. Миграция на v3 - отдельное 
 | `Testcontainers.Kafka` | 4.17.0 | интеграционные тесты, ADR-0002 D-12 |
 | `Testcontainers.PostgreSql` | 4.17.0 | то же; образ TimescaleDB задаётся в фикстуре |
 | `Microsoft.Extensions.TimeProvider.Testing` | 10.11.1 | `FakeTimeProvider` |
+| `LateApexEarlySpeed.Json.Schema` | 5.0.0 | лицензия BSD-3-Clause (nuspec, без платных условий; https://licenses.nuget.org/BSD-3-Clause); проверка тела сообщения по JSON Schema 2020-12 (`docs/api/kafka-event.schema.json`), `format: date-time` проверяется; используется за `ISchemaValidator`, только в `Core/Decoding`. Встроенный `date-time` не принимает дробную часть секунд длиннее 7 цифр, поэтому подменён собственным форматом RFC 3339 (декодер сам усекает время до микросекунд) |
+
+Выбор пакета для JSON Schema: `JsonSchema.Net` 9.7.0 отклонён по решению лида проекта - его бинарный релиз
+распространяется под Open Source Maintenance Fee (плата при годовой выручке от 10 000 USD), что противоречит правилу
+«только бесплатные библиотеки» (ниже).
+
+Наблюдение: зависимости `LateApexEarlySpeed.Json.Schema` 5.0.0 - `LateApexEarlySpeed.Nullability.Generic` 1.0.4,
+`Microsoft.Extensions.Http` 3.1.0, `System.Text.Json` 9.0.14. Это лёгкая транзитивность, попадающая в `Core`
+(`Microsoft.Extensions.Http` не используется кодом Core, `HttpClient` не создаётся); граница Core (нет Kafka, Npgsql,
+EF Core, ASP.NET) не нарушается, но состав транзитивных пакетов проверяется при обновлении версии.
+
+### Правила пакетов
+
+- Используются только бесплатные библиотеки. Лицензия бинарного релиза (а не только исходников репозитория)
+  проверяется на NuGet (nuspec / страница пакета) до добавления пакета и при смене мажорной версии.
+- Новый пакет или версия меняются в `src/Ktm/Directory.Packages.props`, пакет вне перечня - отдельным решением.
 
 Единственный источник версий - `src/Ktm/Directory.Packages.props`; таблица выше - сводка на 2026-11-20 и при
 расхождении уступает файлу. Новая версия или новый пакет меняются в файле, а не в `csproj`.

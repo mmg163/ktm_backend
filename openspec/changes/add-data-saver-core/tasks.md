@@ -88,7 +88,7 @@
 
 ## 9. Упаковка и dev
 
-- [ ] 9.1 Dockerfile (multi-stage, non-root), `deploy/data-saver/compose.yml` с `stop_grace_period` не меньше `Shutdown__TimeoutSeconds`, healthcheck на `/health/ready`, переменные из `.env`; проверка — образ собирается, контейнер стартует с `.env.example`, подставленным вручную в тестовое окружение
+- [ ] 9.1 Dockerfile (multi-stage, non-root; контекст сборки - корень репозитория и включает `docs/api`, т.к. Core.csproj встраивает схему из `..\..\..\docs\api`, design Р-10а), `deploy/data-saver/compose.yml` с `stop_grace_period` не меньше `Shutdown__TimeoutSeconds`, healthcheck на `/health/ready`, переменные из `.env`; проверка — образ собирается, контейнер стартует с `.env.example`, подставленным вручную в тестовое окружение
 - [ ] 9.2 Развернуть на `dev-backend` (Kafka `10.14.0.6:9092`, БД на `dev-data`, роль `ktm_app`); проверка — тестовое сообщение (`source = skud`) в `ktm.events.raw` даёт строку в `ktm.events` за секунды, `/health/ready` = 200, `docker compose stop` завершается без потерь
 - [ ] 9.3 Эксплуатационная заметка `docs/manuals/data-saver.md`: переменные окружения, порядок запуска/остановки, масштабирование копиями, что делать при `ready = 503`, чтение `ktm.events.rejected`, алерт на лаг группы; проверка — по заметке чужой человек поднимает сервис без вопросов
 
