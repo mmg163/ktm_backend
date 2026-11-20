@@ -29,14 +29,16 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private long _lastConsumeErrorLogTicks = long.MinValue;
     private static readonly long ConsumeErrorLogIntervalTicks = (long)(TimeSpan.FromSeconds(30).TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
 
-    public KafkaMessageSource(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaMessageSource> logger)
+    public KafkaMessageSource(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaMessageSource> logger, TimeProvider? timeProvider = null)
     {
         _fatalHandler = fatalHandler;
         _logger = logger;
         _topic = options.Topic;
+        var nativeLog = new KafkaNativeLogBridge(logger, timeProvider ?? TimeProvider.System);
 
         _consumer = new ConsumerBuilder<byte[], byte[]>(BuildConfig(options))
             .SetErrorHandler((_, error) => fatalHandler.Handle(error))
+            .SetLogHandler((_, message) => nativeLog.Handle(message))
             .SetPartitionsAssignedHandler((_, partitions) => OnAssigned(partitions))
             .SetPartitionsRevokedHandler((_, partitions) => OnRevoked(partitions.Select(p => p.TopicPartition)))
             .SetPartitionsLostHandler((_, partitions) => OnRevoked(partitions.Select(p => p.TopicPartition)))
