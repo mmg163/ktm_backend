@@ -18,6 +18,7 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private readonly KafkaFatalErrorHandler _fatalHandler;
     private readonly ILogger<KafkaMessageSource> _logger;
     private readonly Lock _gate = new();
+    private readonly Lock _adminUse = new();
     private readonly List<TopicPartitionKey> _assigned = [];
     private readonly List<TopicPartitionKey> _revoked = [];
     // Кэш текущего назначения для health-потока: обновляется обработчиками ребаланса, consumer.Assignment оттуда не читается.
@@ -79,17 +80,20 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     /// Запрос метаданных топика через клиент, зависимый от handle consumer: проверка связи с брокером для readiness.
     /// Вызывать вне потока цикла. После остановки бросает <see cref="ObjectDisposedException"/>.
     /// </summary>
+    /// <remarks>
+    /// Топик, которого нет в кластере, - не сбой пробы: брокер ответил, значит доступен (ответ метаданных с ошибкой топика
+    /// не бросает исключение). Отсутствие топика проявится как <c>no_partitions_assigned</c> (D-10 ADR-0002).
+    /// Вызов идёт под <see cref="_adminUse"/>: <see cref="Dispose"/> не освободит admin посреди GetMetadata
+    /// (ждёт не дольше <paramref name="timeout"/>). Безопасность SafeHandle у confluent подтвердить не удалось, поэтому так.
+    /// </remarks>
     public void ProbeBroker(TimeSpan timeout)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        IAdminClient admin;
-        lock (_gate)
+        lock (_adminUse)
         {
-            ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            admin = _admin ??= new DependentAdminClientBuilder(_consumer.Handle).Build();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var admin = _admin ??= new DependentAdminClientBuilder(_consumer.Handle).Build();
+            admin.GetMetadata(_topic, timeout);
         }
-
-        admin.GetMetadata(_topic, timeout);
     }
 
     public IReadOnlyCollection<TopicPartitionKey> Assignment =>
@@ -198,7 +202,8 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
             return;
         }
 
-        lock (_gate)
+        // Ждём завершения идущей пробы (она ограничена своим таймаутом), затем освобождаем admin.
+        lock (_adminUse)
         {
             _admin?.Dispose();
             _admin = null;
@@ -212,8 +217,15 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
         {
             _logger.LogWarning(ex, "Kafka consumer close failed");
         }
-
-        _consumer.Dispose();
+        finally
+        {
+            _consumer.Dispose();
+            // Если Close упал и revoke-обработчик не сработал, остановленный источник всё равно не должен считаться назначенным.
+            lock (_gate)
+            {
+                _current.Clear();
+            }
+        }
     }
 
     private static TopicPartition[] ToPartitions(IReadOnlyCollection<TopicPartitionKey> keys) =>

@@ -43,6 +43,18 @@ public sealed class KafkaMessageSourceUnitTests
     }
 
     [Fact]
+    public void Dispose_ClearsAssignmentCache_EvenWithoutRevokeCallback()
+    {
+        var source = Create();
+        source.OnAssigned([new TopicPartition("ktm.events.raw", 0)]);
+        Assert.True(source.HasAssignment);
+
+        source.Dispose();
+
+        Assert.False(source.HasAssignment);
+    }
+
+    [Fact]
     public void ProbeBroker_AfterDispose_ThrowsObjectDisposed()
     {
         var source = Create();

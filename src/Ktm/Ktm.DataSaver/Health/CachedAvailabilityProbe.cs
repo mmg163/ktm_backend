@@ -49,6 +49,9 @@ public sealed class CachedAvailabilityProbe(
             if (first != probe)
             {
                 await cts.CancelAsync();
+                // После предела _inFlight сбрасывается, а брошенная проверка может ещё висеть: следующий цикл способен
+                // запустить вторую параллельно. Число таких «хвостов» ограничено собственным таймаутом блокирующего
+                // вызова клиента (GetMetadata librdkafka), поэтому дополнительной защиты не ставим.
                 // Наблюдаем исход брошенной проверки, чтобы её исключение не осталось необработанным.
                 _ = probe.ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
                 value = false;

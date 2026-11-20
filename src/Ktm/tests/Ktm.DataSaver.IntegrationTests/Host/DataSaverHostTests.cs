@@ -179,6 +179,27 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
     }
 
     [Fact]
+    public async Task MissingTopic_ReadinessIs503NoPartitionsAssigned_NotBrokerUnavailable()
+    {
+        var rejected = await kafka.CreateTopicAsync("ktm.events.rejected");
+        var db = new NpgsqlConnectionStringBuilder(postgres.AppConnectionString);
+        await using var app = new DataSaverAppFactory(DataSaverAppFactory.Settings(
+            kafka.BootstrapServers, $"ktm.events.missing.{Guid.NewGuid():N}", rejected, $"g-{Guid.NewGuid():N}", db));
+        using var client = app.CreateClient();
+
+        // Несколько секунд наблюдаем: проба брокера успешна, поэтому причина никогда не должна стать broker_unavailable.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        while (DateTime.UtcNow < deadline)
+        {
+            var ready = await GetAsync(client, "/health/ready");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, ready.Status);
+            Assert.Contains("no_partitions_assigned", ready.Body);
+            Assert.DoesNotContain("broker_unavailable", ready.Body);
+            await Task.Delay(500);
+        }
+    }
+
+    [Fact]
     public async Task BrokerStopped_ReadinessIs503BrokerUnavailableWithinProbeWindow_LivenessStays200()
     {
         // Собственный брокер: общий контейнер нужен остальным тестам. Восстановление брокера здесь не проверяется:

@@ -207,6 +207,11 @@ Data Saver ДОЛЖЕН предоставлять `GET /health/live` и `GET /h
 - **THEN** `/health/ready` возвращает 503 с причиной `broker_unavailable` не позднее чем через
   интервал кэша проверки плюс её предел ожидания, `/health/live` возвращает 200
 
+#### Scenario: Топик отсутствует
+
+- **WHEN** брокер доступен, но читаемого топика в кластере нет
+- **THEN** `/health/ready` возвращает 503 с причиной `no_partitions_assigned`, а не `broker_unavailable`
+
 #### Scenario: Брокер восстановлен
 
 - **WHEN** брокер снова доступен

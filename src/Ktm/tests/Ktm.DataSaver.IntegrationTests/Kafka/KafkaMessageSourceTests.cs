@@ -134,6 +134,17 @@ public sealed class KafkaMessageSourceTests(KafkaFixture kafka)
     }
 
     [Fact]
+    public void ProbeBroker_for_missing_topic_does_not_fail_because_broker_is_available()
+    {
+        using var source = NewSource($"ktm.events.missing.{Guid.NewGuid():N}", $"g-{Guid.NewGuid():N}");
+
+        var error = Record.Exception(() => source.ProbeBroker(TimeSpan.FromSeconds(5)));
+
+        Assert.Null(error);
+        Assert.False(source.HasAssignment);
+    }
+
+    [Fact]
     public async Task Pause_and_resume_tolerate_partitions_missing_from_assignment()
     {
         var raw = await kafka.CreateTopicAsync("ktm.events.raw");
