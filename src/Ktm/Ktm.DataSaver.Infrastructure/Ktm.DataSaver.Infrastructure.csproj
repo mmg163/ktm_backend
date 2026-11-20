@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <IsDataSaverProject>true</IsDataSaverProject>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Confluent.Kafka" />
+        <PackageReference Include="Npgsql" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Ktm.DataSaver.Core\Ktm.DataSaver.Core.csproj" />
+    </ItemGroup>
+
+</Project>

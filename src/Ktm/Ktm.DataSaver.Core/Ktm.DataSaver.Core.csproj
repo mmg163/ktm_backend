@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <IsDataSaverProject>true</IsDataSaverProject>
+    </PropertyGroup>
+
+</Project>

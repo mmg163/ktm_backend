@@ -2,7 +2,7 @@
 
 **Статус:** черновик для согласования. Только схема: код EF Core и миграции не входят.
 **Дата:** 2026-11-19. **Ветка:** `feature/b3-events-schema`.
-**СУБД:** PostgreSQL 16 + TimescaleDB 2.31. **База:** `ktm_revisor`.
+**СУБД:** PostgreSQL 16 + TimescaleDB 2.32.x (скрипты `db/` проверены на 2.32.1; на 2.31 не проверялись, см. п. 7, вопрос 8). **База:** `ktm_revisor`.
 
 Основания: `docs/03-архитектура.md` (журнал неизменяем, исправления только корректирующими записями),
 `docs/05-источники-данных.md` п. 5.1 (единый формат, идемпотентность по «источник + ID события + timestamp»),
@@ -138,7 +138,7 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 | Индекс по времени | оставить создаваемый TimescaleDB по умолчанию `(occurred_at DESC)` | нужен выборкам «за период по всем людям» (уровень 2, дашборды). Если окажется лишним - отключается `create_default_indexes => false`. |
 
 Названия функций в DDL (`add_compression_policy`) - классический API; в версиях 2.18+ он сохранён, но в документации
-переименован в «columnstore» (`add_columnstore_policy`). **Проверить на целевой сборке 2.31**, какое имя актуально.
+переименован в «columnstore» (`add_columnstore_policy`). На 2.32.1 классическое имя работает (проверено); на других версиях - повторить проверку (п. 7, вопрос 8).
 
 ### 4.2 Внешние ключи и hypertable - результат проверки
 
@@ -170,8 +170,8 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 
 ## 5. Роли и права
 
-Образец - `deploy/dev/postgres/init/01-roles.sh` (`skud_migrator`/`skud_app`). Роли и схема `skud` **не меняются**; для B3
-вводятся отдельные роли (имена - предложение):
+Образец - схема ролей `skud_migrator`/`skud_app` в общей БД `ktm_revisor` (скрипта их создания в этом репозитории нет, ссылка на
+него удалена). Роли и схема `skud` **не меняются**; для B3 вводятся отдельные роли (имена - предложение):
 
 | Роль | Назначение | Права |
 |---|---|---|
@@ -184,13 +184,38 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
   проверяется попыткой выполнения под `ktm_app` (ожидается `permission denied`).
 - `ALTER DEFAULT PRIVILEGES FOR ROLE ktm_migrator IN SCHEMA ktm GRANT SELECT, INSERT ON TABLES TO ktm_app` - для таблиц, которые
   создаст миграция. Чанки hypertable наследуют привилегии родителя (TimescaleDB копирует ACL при создании чанка); это поведение
-  **проверить на стенде**: вставка под `ktm_app` в только что созданный чанк.
+  **проверено на стенде** (2.32.1): вставка под `ktm_app` в только что созданный чанк проходит, ACL наследуется от родителя.
 - `INSERT ... ON CONFLICT DO NOTHING` требует только `INSERT` (+ `SELECT` для вывода арбитра); `DO UPDATE` запрещён правами - и не нужен.
 - Страховка поверх прав (предложение): триггер `BEFORE UPDATE OR DELETE` на обеих таблицах с `RAISE EXCEPTION`. Защищает от
   случайного `UPDATE` под владельцем. Не срабатывает на `drop_chunks` и сжатие - они не построчные.
-- `REVOKE ALL ON DATABASE ktm_revisor FROM PUBLIC; GRANT CONNECT ... TO ktm_migrator, ktm_app`; `REVOKE ALL ON SCHEMA public FROM PUBLIC`.
-  Остальная часть базы `ktm_revisor` (если там уже есть объекты) этими ролями не затрагивается, кроме перечисленных выше прав.
-- Пароли - из окружения, в репозиторий не попадают.
+- `GRANT CONNECT ON DATABASE <текущая БД> TO ktm_migrator, ktm_app` (имя берётся из `current_database()`). Фактически **избыточен**:
+  `PUBLIC` по умолчанию уже имеет `CONNECT`, а отзыв не выполняется (см. ниже); `GRANT` оставлен как явная фиксация намерения
+  и сработает без изменений, если `PUBLIC` когда-либо будет отозван.
+- **Отступление: `REVOKE ALL ON DATABASE ktm_revisor FROM PUBLIC` НЕ выполняется** (решение лида проекта, 2026-11-20). База общая
+  (есть роли `skud_*` и другие потребители), отзыв у `PUBLIC` изменил бы их доступ. Остаточный риск: `ktm_app` и `ktm_migrator`
+  получают `CONNECT`/`TEMP` через `PUBLIC` независимо от явного `GRANT`; эффект ограничен (доступ к схеме `ktm` задаётся
+  отдельно, на `ktm` у `PUBLIC` всё отозвано). Пересмотреть, если для `ktm` будет выделена отдельная БД.
+- Схема `ktm` создаётся с `AUTHORIZATION ktm_migrator`; если схема уже существует и её владелец не `ktm_migrator`, `db/init` падает
+  (`DO`-блок с `RAISE EXCEPTION`): владелец существующей схемы молча не меняется, чужая схема `ktm` разбирается администратором.
+- `REVOKE ALL ON SCHEMA ktm FROM PUBLIC`; в `public` выполняется только `REVOKE CREATE ON SCHEMA public FROM PUBLIC`.
+  На PostgreSQL 15+ с новой БД это no-op (по умолчанию `CREATE` у `PUBLIC` уже отозван). **Предупреждение:** на кластере, где `public`
+  создан до PG15 (с `CREATE` у `PUBLIC`), команда **затронет все роли общей БД** (включая `skud_*`), лишив их права создавать объекты
+  в `public`; перед выполнением `db/init` на такой БД проверить `\dn+ public` и согласовать с администратором.
+  **Отступление: `REVOKE ALL ON SCHEMA public` не выполняется** - функции TimescaleDB (`create_hypertable`,
+  `add_compression_policy`) находятся в `public`, и `ktm_migrator` без `USAGE` не смог бы их вызвать. Прочие объекты БД
+  `ktm_revisor` этими ролями не затрагиваются, за исключением права `CREATE` в `public` у `PUBLIC` (см. выше).
+- Пароли в `db/init` **не задаются** и в репозиторий не попадают: администратор задаёт их после `init` отдельно (способ - `db/README.md`).
+- **Известное ограничение: `TRUNCATE`.** Владелец `ktm_migrator` может выполнить `TRUNCATE`, `DROP TABLE`, `drop_chunks` - триггер
+  `BEFORE UPDATE OR DELETE` их не перехватывает, а сервису (`ktm_app`) эти права не выданы. Для `TRUNCATE` добавляется `BEFORE TRUNCATE`
+  statement-level триггер на обеих таблицах (срабатывание на hypertable проверено на стенде; на чанки триггер не распространяется, см. ниже; для остального остаётся
+  организационным ограничением: `ktm_migrator` используется только при применении миграций, пароль у администратора).
+  `DROP`/`drop_chunks` триггером не закрываются и остаются организационной мерой.
+- **Остаточные риски владельца `ktm_migrator`** (права владельца не отозвать, закрываются только организационно: пароль у администратора,
+  роль не используется сервисом, действия аудируются на уровне СУБД):
+  - `TRUNCATE` отдельного **чанка** проходит: триггер стоит на родительской hypertable и на чанки не распространяется;
+  - `ALTER TABLE ... DISABLE TRIGGER` отключает триггеры-страховки (и `UPDATE/DELETE`, и `TRUNCATE`);
+  - `DROP TABLE`, `drop_chunks`, `ALTER TABLE`, смена владельца и `GRANT` собственным объектам.
+  Триггеры - страховка от ошибок, не защита от злоумышленника с ролью владельца.
 
 Служебные задания TimescaleDB (политика сжатия) выполняются от имени владельца hypertable, то есть `ktm_migrator`; это не выдаёт
 сервису никаких прав.
@@ -201,7 +226,7 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 
 | Индекс | Колонки | Назначение |
 |---|---|---|
-| `events_pkey` | `(event_id, occurred_at)` | адресация записи (PK) |
+| `pk_events` | `(event_id, occurred_at)` | адресация записи (PK) |
 | `ux_events_natural_key` | `UNIQUE (source, source_event_id, occurred_at)` | идемпотентность приёма; разрешение ссылки исправления по натуральному ключу |
 | `ix_events_person_time` | `(external_person_id, occurred_at)` | лента человека за период; читается и вперёд, и назад (`ORDER BY occurred_at DESC` без сортировки) |
 | `events_occurred_at_idx` | `(occurred_at DESC)` | создаётся TimescaleDB по умолчанию; выборки по периоду без фильтра по человеку |
@@ -227,7 +252,7 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 | 5 | Размер `payload` (Q4) | предел 64 КиБ на сообщение, проверка в Data Saver; в БД страховочный CHECK `pg_column_size(payload) <= 262144` | событие по контракту - малое сообщение без видео/изображений/биометрии; 64 КиБ с запасом на порядок. Превышение: в `ktm.events.rejected`, не в журнал. Предел уточнить по реальным сообщениям адаптеров (особенно CV). |
 | 6 | Источник `received_at` | заполняет Data Saver | в сообщении поля нет (`kafka-event-format.md` п. 2). |
 | 7 | Имена ролей и схемы (`ktm_migrator`, `ktm_app`, схема `ktm`) | как указано | **Решено:** две новые роли и отдельная схема. `skud_app` имеет UPDATE/DELETE на схему `skud`, а `skud_migrator` владеет базой и схемой `skud`, поэтому переиспользовать их нельзя. Остаётся согласовать имена с администратором БД и с существующими объектами `ktm_revisor`. |
-| 8 | Версия TimescaleDB 2.31 и имена API (compression/columnstore), поведение FK на hypertable, права на чанки | проверить на стенде | см. 4.1, 4.2, раздел 5. |
+| 8 | Версия TimescaleDB, имена API (compression/columnstore), поведение FK на hypertable, права на чанки | **Решено (2026-11-20):** целевая линия 2.32.x; проверено на 2.32.1 (классический API `add_compression_policy` и `compress_*` работает, права на чанки наследуются). Версия 2.31 **не проверялась** и не является блокером. | Если на стенде предприятия окажется 2.31 или иная, прогон проверок `db/README.md` повторяется на ней до приёмки этапа; образ в Testcontainers фиксируется тегом (`2.32.1-pg16`), а не `latest`. См. 4.1, 4.2, раздел 5. |
 | 9 | Кросс-источниковые исправления | нет; колонка `original_source` заведена | вопрос открыт в `kafka-event-format.md` п. 9. |
 
 ---
@@ -262,15 +287,32 @@ LIMIT  200;
 
 ## 9. Черновик DDL (справочный; не миграция)
 
+> Источник истины - `db/migrations/` (и `db/init/` для ролей, схемы и расширения), см. `db/README.md` и ADR-0004.
+> Приведённый ниже DDL повторяет файлы `db/` по составу объектов и прав; при расхождении прав файл в `db/`. Изменения схемы
+> вносятся новыми файлами `V00N`. Намеренные отличия от файлов (синтаксис и упаковка, не смысл):
+>
+> 1. Роли и пароли: в `db/init` роли создаются **без пароля** (`DO`-блок с проверкой `pg_roles`); пароли администратор задаёт
+>    отдельно (`db/README.md`). Здесь роли показаны одной строкой `CREATE ROLE ... LOGIN` для краткости.
+> 2. `GRANT CONNECT` в файле выполняется через `DO`/`format('%I', current_database())`, а не с зашитым именем БД.
+> 3. Проверки наличия объектов (роли, компрессия, триггеры) в файлах - `DO`-блоки по `pg_roles`/`timescaledb_information`/`pg_trigger`;
+>    здесь они не воспроизведены (`CREATE TRIGGER` показан без обёртки).
+> 4. Предусловие `V001` (`current_user = 'ktm_migrator'`, наличие расширения) здесь опущено.
+> 5. Проверка владельца схемы `ktm` в `db/init` (`DO`-блок: `RAISE EXCEPTION`, если владелец не `ktm_migrator`) здесь не воспроизведена;
+>    `CREATE SCHEMA IF NOT EXISTS ... AUTHORIZATION` показан без неё (см. п. 5).
+>
+> Принятые отступления от первоначального замысла (отражены и в файлах, и здесь): нет `REVOKE ALL ON DATABASE` (п. 5, решение лида
+> 2026-11-20); на `public` только `REVOKE CREATE` (п. 5); пароли вне репозитория; страховка от `TRUNCATE` (п. 5).
+
 ```sql
--- Выполняется под суперпользователем один раз при инициализации (не ролью миграций):
---   CREATE ROLE ktm_migrator LOGIN PASSWORD :'ddl_pw';
---   CREATE ROLE ktm_app      LOGIN PASSWORD :'dml_pw';
+-- Выполняется под суперпользователем один раз при инициализации (db/init/001_roles_and_extension.sql; не ролью миграций):
+--   CREATE ROLE ktm_migrator LOGIN;           -- без пароля; пароль задаёт администратор отдельно
+--   CREATE ROLE ktm_app      LOGIN;           -- без пароля
 --   (БД ktm_revisor уже есть) CREATE EXTENSION IF NOT EXISTS timescaledb;
---   REVOKE ALL ON DATABASE ktm_revisor FROM PUBLIC;
---   GRANT CONNECT ON DATABASE ktm_revisor TO ktm_migrator, ktm_app;
---   CREATE SCHEMA IF NOT EXISTS ktm AUTHORIZATION ktm_migrator;
+--   GRANT CONNECT ON DATABASE ktm_revisor TO ktm_migrator, ktm_app;   -- REVOKE ... FROM PUBLIC НЕ выполняется (п. 5)
+--   CREATE SCHEMA IF NOT EXISTS ktm AUTHORIZATION ktm_migrator;       -- владелец существующей схемы не меняется
+--   REVOKE ALL ON SCHEMA ktm FROM PUBLIC;
 --   GRANT USAGE ON SCHEMA ktm TO ktm_app;
+--   REVOKE CREATE ON SCHEMA public FROM PUBLIC;                       -- REVOKE ALL нельзя: функции TimescaleDB в public
 --   ALTER DEFAULT PRIVILEGES FOR ROLE ktm_migrator IN SCHEMA ktm GRANT SELECT, INSERT ON TABLES TO ktm_app;
 
 -- Далее - скрипт миграций под ktm_migrator, psql -v ON_ERROR_STOP=1.
@@ -297,6 +339,8 @@ CREATE TABLE IF NOT EXISTS ktm.events (
     CONSTRAINT ck_events_person          CHECK (length(external_person_id) > 0),
     CONSTRAINT ck_events_trust           CHECK (trust BETWEEN 0 AND 100),
     CONSTRAINT ck_events_payload_object  CHECK (jsonb_typeof(payload) = 'object'),
+    -- 256 КиБ - страховка БД поверх контракта приёма (payload <= 64 КиБ, ER п. 7.5). pg_column_size возвращает размер
+    -- хранимого (возможно сжатого) значения, поэтому предел заведомо с запасом.
     CONSTRAINT ck_events_payload_size    CHECK (pg_column_size(payload) <= 262144)
 );
 
@@ -307,7 +351,7 @@ SELECT create_hypertable('ktm.events', 'occurred_at',
 CREATE INDEX IF NOT EXISTS ix_events_person_time
     ON ktm.events (external_person_id, occurred_at);
 
--- Сжатие (предложение; имена API проверить на 2.31, см. 4.1)
+-- Сжатие (в файле ALTER обёрнут в DO-блок: выполняется, только если сжатие ещё не включено). Классический API проверен на 2.32.1 (п. 7, вопрос 8)
 ALTER TABLE ktm.events SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'external_person_id',
@@ -334,6 +378,11 @@ CREATE TABLE IF NOT EXISTS ktm.event_corrections (
     CONSTRAINT ux_event_corrections_correction_key
         UNIQUE (source, correction_source_event_id, correction_occurred_at),
     CONSTRAINT ux_event_corrections_event_id UNIQUE (correction_event_id),
+    CONSTRAINT ck_event_corrections_source                     CHECK (length(source) BETWEEN 1 AND 32),
+    CONSTRAINT ck_event_corrections_correction_source_event_id CHECK (length(correction_source_event_id) BETWEEN 1 AND 128),
+    CONSTRAINT ck_event_corrections_original_source            CHECK (length(original_source) BETWEEN 1 AND 32),
+    CONSTRAINT ck_event_corrections_original_source_event_id   CHECK (length(original_source_event_id) BETWEEN 1 AND 128),
+    CONSTRAINT ck_event_corrections_reason                     CHECK (reason IS NULL OR length(reason) > 0),
     CONSTRAINT ck_event_corrections_actor CHECK (length(actor) > 0)
     -- FK на ktm.events НЕ создаются намеренно (раздел 4.2)
 );
@@ -345,20 +394,26 @@ CREATE INDEX IF NOT EXISTS ix_event_corrections_original
 CREATE OR REPLACE FUNCTION ktm.forbid_modify() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'ktm.% is append-only (% is forbidden)', TG_TABLE_NAME, TG_OP
+    RAISE EXCEPTION '%.% is append-only (% is forbidden)', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP
         USING ERRCODE = 'insufficient_privilege';
-END $$;
+END
+$$;
 
-DROP TRIGGER IF EXISTS trg_events_immutable ON ktm.events;
+-- В файле каждый CREATE TRIGGER обёрнут в проверку по pg_trigger (без DROP: повтор не пересоздаёт триггер)
 CREATE TRIGGER trg_events_immutable BEFORE UPDATE OR DELETE ON ktm.events
     FOR EACH ROW EXECUTE FUNCTION ktm.forbid_modify();
-
-DROP TRIGGER IF EXISTS trg_event_corrections_immutable ON ktm.event_corrections;
 CREATE TRIGGER trg_event_corrections_immutable BEFORE UPDATE OR DELETE ON ktm.event_corrections
     FOR EACH ROW EXECUTE FUNCTION ktm.forbid_modify();
 
--- Права: явно, на случай, если миграция применена до ALTER DEFAULT PRIVILEGES
+-- Защита от TRUNCATE родительской hypertable (п. 5); на чанки не распространяется, см. остаточные риски владельца
+CREATE TRIGGER trg_events_no_truncate BEFORE TRUNCATE ON ktm.events
+    FOR EACH STATEMENT EXECUTE FUNCTION ktm.forbid_modify();
+CREATE TRIGGER trg_event_corrections_no_truncate BEFORE TRUNCATE ON ktm.event_corrections
+    FOR EACH STATEMENT EXECUTE FUNCTION ktm.forbid_modify();
+
+-- Права: явно, независимо от ALTER DEFAULT PRIVILEGES; UPDATE/DELETE/TRUNCATE сервису не выдаются
 REVOKE ALL ON ktm.events, ktm.event_corrections FROM PUBLIC;
+REVOKE ALL ON ktm.events, ktm.event_corrections FROM ktm_app;
 GRANT SELECT, INSERT ON ktm.events, ktm.event_corrections TO ktm_app;
 ```
 
