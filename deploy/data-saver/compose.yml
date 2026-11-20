@@ -1,0 +1,39 @@
+# Data Saver (ADR-0002). Запуск из каталога deploy/data-saver:
+#   cp .env.example .env            # заполнить значения; .env в git не попадает
+#   mkdir -p secrets && printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password && chmod 0444 secrets/ktm_app_password
+#   docker compose up -d --build
+# Контекст сборки - корень репозитория (Core.csproj встраивает docs/api, design Р-10а).
+services:
+  data-saver:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ktm-data-saver:local
+    restart: unless-stopped
+    # Настройки DataSaver__* - из .env; секрет БД - только файлом (DataSaver__Postgres__PasswordFile в .env).
+    env_file: .env
+    secrets:
+      - ktm_app_password
+    # Не меньше DataSaver__Shutdown__TimeoutSeconds (30 по умолчанию) + запас host 5 с (ADR-0002 D-8, решение Q3):
+    # иначе SIGKILL придёт раньше предела остановки. При увеличении Shutdown__TimeoutSeconds увеличить и это значение.
+    stop_grace_period: 35s
+    # Образ без curl: HTTP-запрос к /health/ready через bash /dev/tcp. Проба брокера Kafka кэшируется на 5 с
+    # и ограничена 2 с, проба БД ограничена 2 с (HealthSignals): один неудачный ответ может быть отражением
+    # кэша, поэтому retries >= 2; timeout покрывает обе пробы подряд.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/$${DataSaver__Health__Port:-8080} &&
+          printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 &&
+          head -n 1 <&3 | grep -q ' 200 '
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+secrets:
+  ktm_app_password:
+    file: ./secrets/ktm_app_password

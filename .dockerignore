@@ -1,0 +1,20 @@
+# Контекст сборки - корень репозитория; docs/api НЕ исключать (встраивается в Core.csproj).
+**/bin/
+**/obj/
+.git/
+.claude/
+.idea/
+.vs/
+.env
+**/.env
+src/Ktm/tests/
+src/Ktm/Ktm.Api/
+db/
+infra/
+openspec/
+deploy/
+docs/adr/
+docs/chtz/
+docs/design/
+docs/manuals/
+docs/test-protocols/
