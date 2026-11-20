@@ -126,7 +126,7 @@ public class IngestionPipelineTests
 
         var decision = await new BlockingWriteFailureHandler().HandleAsync(context, CancellationToken.None);
 
-        Assert.Equal(WriteFailureAction.Retry, decision.Action);
+        Assert.Equal(WriteFailureKind.Retry, decision.Kind);
         Assert.Empty(decision.DeadLetterItems);
     }
 }

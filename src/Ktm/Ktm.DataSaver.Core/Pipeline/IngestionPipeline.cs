@@ -15,15 +15,15 @@ public sealed class IngestionPipeline(FormatStage formatStage, IEnumerable<IInge
 
     public PipelineResult Process(ConsumedMessage message)
     {
-        var (parsed, formatVerdict) = formatStage.Run(message);
-        if (!formatVerdict.IsAccepted)
+        var format = formatStage.Run(message);
+        if (format.Event is not { } parsed)
         {
-            return new PipelineResult(message, null, formatVerdict);
+            return new PipelineResult(message, null, format.Verdict);
         }
 
         foreach (var stage in _stages)
         {
-            var verdict = stage.Evaluate(message, parsed!);
+            var verdict = stage.Evaluate(message, parsed);
             if (!verdict.IsAccepted)
             {
                 return new PipelineResult(message, null, verdict);

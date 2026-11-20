@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Ktm.DataSaver.Core.Model;
-using Json.Schema;
 
 namespace Ktm.DataSaver.Core.Decoding;
 
@@ -19,18 +18,22 @@ public sealed partial class EventDecoder
     private const string SchemaResourceName = "Ktm.DataSaver.Core.Schemas.kafka-event.schema.json";
     private const int MaxDetailLength = 500;
 
-    private static readonly EvaluationOptions EvaluationOptions = new()
+    private static readonly JsonDocumentOptions ParseOptions = new()
     {
-        // format: date-time по умолчанию - только аннотация; включаем проверку (ADR-0003 п. 2.2).
-        RequireFormatValidation = true,
-        OutputFormat = OutputFormat.List,
+        // Дубликаты имён свойств отвергаем: парсеры расходятся (jsonb берёт последнее), схема и запись увидели бы разное.
+        AllowDuplicateProperties = false,
     };
 
-    private readonly Dictionary<int, JsonSchema> _schemasByVersion;
+    private readonly Dictionary<int, ISchemaValidator> _validatorsByVersion;
 
-    public EventDecoder()
+    public EventDecoder() : this(new Dictionary<int, ISchemaValidator> { [1] = LoadEmbeddedSchema() })
     {
-        _schemasByVersion = new Dictionary<int, JsonSchema> { [1] = LoadEmbeddedSchema() };
+    }
+
+    /// <summary>Набор поддерживаемых версий формата и их валидаторов схемы.</summary>
+    public EventDecoder(IReadOnlyDictionary<int, ISchemaValidator> validatorsByVersion)
+    {
+        _validatorsByVersion = new Dictionary<int, ISchemaValidator>(validatorsByVersion);
     }
 
     public DecodeResult Decode(ReadOnlyMemory<byte> body)
@@ -43,11 +46,18 @@ public sealed partial class EventDecoder
         JsonDocument document;
         try
         {
-            document = JsonDocument.Parse(body);
+            // UTF-8 BOM в начале тела не принимается (malformed_json): адаптеры обязаны слать JSON без BOM.
+            document = JsonDocument.Parse(body, ParseOptions);
+        }
+        catch (InvalidOperationException)
+        {
+            // Проверка дубликатов декодирует имена свойств; непарный суррогат в имени бросает InvalidOperationException.
+            return Fail(RejectReasons.InvalidSchema, "Message contains an unpaired UTF-16 surrogate in a property name.");
         }
         catch (JsonException ex)
         {
-            return Fail(RejectReasons.MalformedJson, ex.Message);
+            var position = ex.LineNumber is { } line ? $" at line {line + 1}, position {ex.BytePositionInLine + 1}" : string.Empty;
+            return Fail(RejectReasons.MalformedJson, $"Body is not valid JSON (or has duplicate property names){position}.");
         }
 
         using (document)
@@ -68,20 +78,21 @@ public sealed partial class EventDecoder
             return Fail(RejectReasons.UnknownSchemaVersion, versionProblem);
         }
 
-        if (!_schemasByVersion.TryGetValue(version, out var schema))
+        if (!_validatorsByVersion.TryGetValue(version, out var validator))
         {
             return Fail(RejectReasons.UnknownSchemaVersion, $"schemaVersion {version} is not supported.");
         }
 
-        var evaluation = schema.Evaluate(root, EvaluationOptions);
-        if (!evaluation.IsValid)
+        // До схемы: библиотека схемы не обязана переживать непарные суррогаты, а jsonb их всё равно отвергает.
+        if (JsonbCompatibility.FindProblem(root) is { } jsonbProblem)
         {
-            return Fail(RejectReasons.InvalidSchema, DescribeErrors(evaluation));
+            return Fail(RejectReasons.InvalidSchema, jsonbProblem);
         }
 
-        if (ContainsNullChar(root))
+        var schemaResult = validator.Validate(root);
+        if (!schemaResult.IsValid)
         {
-            return Fail(RejectReasons.InvalidSchema, "Message contains the U+0000 character.");
+            return Fail(RejectReasons.InvalidSchema, schemaResult.Errors);
         }
 
         var source = root.GetProperty("source").GetString()!;
@@ -190,71 +201,28 @@ public sealed partial class EventDecoder
         return true;
     }
 
-    private static bool ContainsNullChar(JsonElement element)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.String:
-                return element.GetString()!.Contains('\0');
-            case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
-                {
-                    if (ContainsNullChar(item))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
-                {
-                    if (property.Name.Contains('\0') || ContainsNullChar(property.Value))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            default:
-                return false;
-        }
-    }
-
-    private static string DescribeErrors(EvaluationResults evaluation)
-    {
-        // Только расположение и текст ошибки схемы; значения полей из тела (возможные ПДн) в пояснение не копируем.
-        var parts = new List<string>();
-        foreach (var detail in (evaluation.Details ?? []).Prepend(evaluation))
-        {
-            if (detail.Errors is null)
-            {
-                continue;
-            }
-
-            foreach (var error in detail.Errors)
-            {
-                parts.Add($"{detail.InstanceLocation}: {error.Key} - {error.Value}");
-            }
-        }
-
-        var text = parts.Count == 0 ? "Message does not match the schema." : string.Join("; ", parts.Distinct());
-        return Truncate(text);
-    }
-
     private static DecodeResult Fail(string reason, string detail) => DecodeResult.Failure(reason, Truncate(detail));
 
-    private static string Truncate(string text) => text.Length <= MaxDetailLength ? text : text[..MaxDetailLength];
+    private static string Truncate(string text)
+    {
+        if (text.Length <= MaxDetailLength)
+        {
+            return text;
+        }
 
-    private static JsonSchema LoadEmbeddedSchema()
+        // Не режем суррогатную пару посередине.
+        var length = char.IsHighSurrogate(text[MaxDetailLength - 1]) ? MaxDetailLength - 1 : MaxDetailLength;
+        return text[..length];
+    }
+
+    private static JsonSchemaNetValidator LoadEmbeddedSchema()
     {
         using var stream = typeof(EventDecoder).Assembly.GetManifestResourceStream(SchemaResourceName)
                            ?? throw new InvalidOperationException($"Embedded resource '{SchemaResourceName}' not found.");
         using var reader = new StreamReader(stream);
-        // Собственный реестр: глобальный отвергает повторную регистрацию схемы с тем же $id (второй экземпляр декодера).
-        return JsonSchema.FromText(reader.ReadToEnd(), new BuildOptions { SchemaRegistry = new SchemaRegistry() });
+        return new JsonSchemaNetValidator(reader.ReadToEnd());
     }
 
-    [GeneratedRegex(@"^(?<base>\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2})(?:\.(?<frac>\d+))?Z$")]
+    [GeneratedRegex(@"^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.(?<frac>[0-9]+))?Z\z")]
     private static partial Regex UtcTimestampRegex();
 }

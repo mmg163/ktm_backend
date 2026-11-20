@@ -2,7 +2,7 @@ using Ktm.DataSaver.Core.Model;
 
 namespace Ktm.DataSaver.Core.Pipeline;
 
-public enum WriteFailureAction
+public enum WriteFailureKind
 {
     Retry,
     DeadLetter,
@@ -11,23 +11,23 @@ public enum WriteFailureAction
 /// <summary>Решение порта C6: повторить пачку либо увести перечисленные сообщения в отдельное хранилище.</summary>
 public sealed record WriteFailureDecision
 {
-    private WriteFailureDecision(WriteFailureAction action, IReadOnlyList<ConsumedMessage> items)
+    private WriteFailureDecision(WriteFailureKind kind, IReadOnlyList<ConsumedMessage> items)
     {
-        Action = action;
+        Kind = kind;
         DeadLetterItems = items;
     }
 
-    public static WriteFailureDecision Retry { get; } = new(WriteFailureAction.Retry, []);
+    public static WriteFailureDecision Retry { get; } = new(WriteFailureKind.Retry, []);
 
-    public WriteFailureAction Action { get; }
+    public WriteFailureKind Kind { get; }
 
-    /// <summary>Сообщения, признанные потерянными (только при <see cref="WriteFailureAction.DeadLetter"/>).</summary>
+    /// <summary>Сообщения, признанные потерянными (только при <see cref="WriteFailureKind.DeadLetter"/>).</summary>
     public IReadOnlyList<ConsumedMessage> DeadLetterItems { get; }
 
     public static WriteFailureDecision DeadLetter(IReadOnlyList<ConsumedMessage> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        return new WriteFailureDecision(WriteFailureAction.DeadLetter, items);
+        return new WriteFailureDecision(WriteFailureKind.DeadLetter, items);
     }
 }
 
