@@ -92,7 +92,9 @@
 | `DataSaver__Trust__Default` | `100` | коэффициент доверия по умолчанию, целое 0..100 |
 | `DataSaver__Trust__Source__<source>` | - | переопределение для источника, например `DataSaver__Trust__Source__skud=80` |
 
-Допустимые значения `<source>` - из enum `source` в `docs/api/kafka-event.schema.json`.
+Допустимые значения `<source>` - из enum `source` в `docs/api/kafka-event.schema.json`. Значение `<source>` в имени
+переменной **не проверяется**: опечатка молча игнорируется, и для реального источника останется `Trust__Default`
+(`EnvironmentSourceTrustProvider.cs:40-41`). Имена сверяйте вручную.
 
 Шаблон: `deploy/data-saver/.env.example`. Реальный `.env` в git не попадает.
 
@@ -104,19 +106,23 @@
 cp .env.example .env        # подставить Kafka, хост и базу БД
 mkdir -p secrets
 printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password
-chmod 0444 secrets/ktm_app_password     # читается пользователем контейнера (uid 1654)
+sudo chown 1654:1654 secrets/ktm_app_password && chmod 0400 secrets/ktm_app_password   # владелец - uid пользователя контейнера
 docker compose up -d --build
-docker compose ps                        # STATUS должен стать "healthy"
+docker compose ps                        # STATUS должен стать "healthy" (это только liveness, см. ниже)
 docker compose logs -f data-saver
 ```
 
-`secrets/` и `.env` в git не попадают (`.gitignore`). Файл секрета должен быть читаем из контейнера: процесс работает не от
-root (пользователь `app`, uid 1654), при недоступном файле сервис не стартует (сообщение называет путь, не содержимое).
+`secrets/` и `.env` в git и в контекст сборки образа не попадают (`.gitignore`, `.dockerignore`). Файл секрета должен быть
+читаем из контейнера: процесс работает не от root (пользователь `app`, uid 1654), при недоступном файле сервис не стартует
+(сообщение называет путь, не содержимое). Поэтому владелец файла - uid 1654 и права `0400`. Если `chown` невозможен,
+допустима альтернатива `chmod 0444`, но **тогда пароль читает любой локальный пользователь хоста** - использовать только на
+изолированном dev-хосте.
 
-Признак успешного запуска: контейнер `healthy`, `GET /health/ready` отвечает 200
-(`{"status":"ok","reason":null}`) - то есть consumer получил назначение партиций, брокер и БД отвечают.
+Признак успешного запуска: `GET /health/ready` отвечает 200 (`{"status":"ok","reason":null}`) - то есть consumer получил
+назначение партиций, брокер и БД отвечают. Статус `healthy` в `docker compose ps` для этого **недостаточен**: healthcheck
+контейнера смотрит `/health/live` (п. 5), а он остаётся 200 и при недоступных БД и Kafka.
 
-Проверка вручную (в образе нет curl):
+Проверка ready вручную (в образе нет curl); для liveness замените `ready` на `live`:
 
 ```bash
 docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /health/ready HTTP/1.0\r\nHost: x\r\n\r\n" >&3; cat <&3'
@@ -128,7 +134,8 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
 коммита, пачка придёт повторно (дубликатов в журнале не будет - их гасит уникальный ключ). Остановка посреди обработки и
 `kill -9` данные не теряют и дубликатов не создают (ADR-0002, D-8).
 
-`stop_grace_period` в `compose.yml` задан 35 с = `Shutdown__TimeoutSeconds` (30) + запас host 5 с (решение лида Q3).
+`stop_grace_period` в `compose.yml` задан 40 с = `Shutdown__TimeoutSeconds` (30) + запас host 5 с (решение лида Q3) +
+ещё 5 с запаса. Значения связаны.
 **При увеличении `Shutdown__TimeoutSeconds` увеличьте и `stop_grace_period`**, иначе Docker пошлёт SIGKILL раньше
 предела (данные не теряются, но остановка перестаёт быть штатной).
 
@@ -161,7 +168,16 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
   **Недоступность БД и Kafka liveness не роняет** - перезапуск их не лечит.
 - `GET /health/ready` - 200 только если consumer получил назначение партиций, состояние не `Degraded`, брокер Kafka
   отвечает на запрос метаданных, БД отвечает на `SELECT 1`. Проверки брокера и БД ограничены 2 с; результат пробы брокера
-  кэшируется на 5 с (поэтому healthcheck в `compose.yml` с `retries: 3`).
+  кэшируется на 5 с.
+
+**Что видно в статусе контейнера.** Healthcheck в `compose.yml` направлен на `/health/live` (дешёвая проверка без
+обращения к брокеру и БД). Следствия:
+
+- `unhealthy` в `docker compose ps` означает `loop_stalled` (цикл приёма завис) или `consumer_fatal_error`;
+- недоступность БД и Kafka (`ready = 503`) в статусе контейнера **не видна**: контейнер остаётся `healthy`. Состояние ready
+  смотреть напрямую (команда в п. 3, `... /health/ready`) или настроить внешний мониторинг на этот endpoint;
+- Docker `unhealthy`-контейнер **сам не перезапускает**, а `restart: unless-stopped` реагирует только на выход процесса.
+  При `loop_stalled` перезапускайте вручную: `docker compose restart data-saver` (данные не теряются, пачка придёт повторно).
 
 Коды причин `ready = 503` (порядок проверки сверху вниз, возвращается первая сработавшая):
 
@@ -184,10 +200,12 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
   заглушка всегда повторяет пачку, то есть партиция блокируется, пока причина не устранена; данные остаются в Kafka
   (хранение 7 суток). Лог `Error` на каждой попытке.
 
-Недоступность БД - технический сбой сервиса, на оценки сотрудников не влияет (`docs/07`, п. 7.2).
+Недоступность БД - технический сбой сервиса, а не ухудшение оценки сотрудника: по духу `docs/07`, п. 7.2 (при сбое
+источника - технический инцидент, а не негативная оценка); прямого требования именно про недоступность БД в `docs/07`
+нет - **уточнить**.
 
-Контейнер с `liveness`-проблемой или `ready = 503` Docker сам не перезапускает (`restart: unless-stopped` реагирует только
-на выход процесса); статус виден в `docker compose ps` как `unhealthy`.
+`ready = 503` (БД, Kafka, `ingestion_degraded`) в `docker compose ps` не отражается, см. выше; Docker перезапуск для него не
+делает, и перезапуск не нужен (сервис восстанавливается сам).
 
 ## 6. Топик `ktm.events.rejected`
 
@@ -236,7 +254,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 Столбец `LAG` по партициям `ktm.events.raw`. Алертить нужно:
 
 - рост лага при `ready = 200` (сервис не успевает; решение - масштабирование копиями, п. 4, и замер из
-  `docs/test-protocols/data-saver-throughput.md` после задачи 8);
+  `docs/test-protocols/data-saver-throughput.md` - будет создан в задаче 8);
 - ненулевой и растущий лаг при `ready = 503` / `ingestion_degraded` (сервис не пишет);
 - жёсткий предел: сообщения в `ktm.events.raw` хранятся 7 суток, лаг в часах не должен приближаться к этому сроку (иначе
   непрочитанные сообщения будут удалены брокером).
@@ -248,13 +266,13 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 | Код | Когда |
 |---|---|
 | `0` | штатная остановка по SIGTERM |
-| `70` | фатальная ошибка клиента Kafka (`Error.IsFatal`): ретраи не помогают, процесс завершается после штатной остановки цикла; перед этим `/health/live` отвечает 503 `consumer_fatal_error`. Оркестратор должен перезапустить контейнер (`restart: unless-stopped`) |
-| `1` | аварийное падение цикла приёма (необработанное исключение): лог `Critical` `Ingestion loop failed; the process is terminating` |
+| `70` | фатальная ошибка клиента Kafka (`Error.IsFatal`): ретраи не помогают, процесс завершается после штатной остановки цикла; перед этим `/health/live` отвечает 503 `consumer_fatal_error`. Выход процесса перезапускает `restart: unless-stopped` |
+| `1` | ошибка цикла приёма, перехваченная и залогированная (`DataSaverWorker.cs:39-44`): лог `Critical` `Ingestion loop failed; the process is terminating`, затем процесс завершается этим кодом |
 
 Отказ запуска из-за ошибки настроек - необработанное исключение host с текстом вида
 `OptionsValidationException: DataSaver__Kafka__BootstrapServers is required.` в логе. Код выхода в этом случае при
-проверке образа на Docker 29 / Linux контейнере получился `139` (необработанное исключение .NET, не код сервиса);
-контракта на этот код нет, ориентируйтесь на текст в логе.
+проверке образа на Docker 29 / Linux контейнере получился `139` (причина не подтверждена - **уточнить**; код сервисом
+не задаётся); контракта на этот код нет, ориентируйтесь на текст в логе.
 
 При любом ненулевом выходе сначала смотрите лог последних строк `Critical` перед завершением.
 
@@ -264,7 +282,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
   зависшем брокере может удлинить остановку сверх `Shutdown__TimeoutSeconds`; тогда Docker остановит процесс по
   `stop_grace_period` (SIGKILL), данные не теряются, пачка придёт повторно.
 - **Q2.** Для неразобранного сообщения `Source` и `SourceEventId` в логе отбраковки = `null`.
-- **Q3.** `stop_grace_period` >= `Shutdown__TimeoutSeconds` + 5 с (запас host).
+- **Q3.** `stop_grace_period` >= `Shutdown__TimeoutSeconds` + 5 с (запас host); в `compose.yml` принято 40 с (30 + 5 + 5 запас).
 - Прочие решения, на которые стоит оглянуться: `DataSaver__Postgres__SslMode` по умолчанию `Require`; потолок backoff
   жёсткий (30 с после джиттера); `Resume` партиций выполняется перед commit offset (ADR-0002, D-7).
 
@@ -273,5 +291,8 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 - Движок правил отбраковки, топик отбракованных правилами, содержимое проверок C5 и обработка ошибок данных C6 (в т.ч.
   `ktm.events.dlq`) - вне объёма этой версии (`tasks.md`, группа 10).
 - Коэффициент доверия источника задаётся переменными окружения (п. 2) и применяется после перезапуска.
-- При недоступном Kafka клиент пишет в лог много предупреждений `Kafka client error` (в проверке со старта контейнера с
-  несуществующим хостом - порядка тысячи строк в минуту): учитывайте при хранении логов.
+- При недоступном Kafka шум в логе большой: порядка 1700 строк в минуту через `ILogger` (`Kafka client error`) плюс
+  нативные строки librdkafka в stderr (в проверке со старта контейнера с несуществующим хостом). Лог контейнера в
+  `compose.yml` ограничен `json-file`, `max-size: 10m`, `max-file: 3` (до 30 МБ): при флуде старые строки вытесняются,
+  то есть более ранние `Critical`/`Error` могут пропасть из `docker compose logs` - при разборе инцидента снимайте лог
+  сразу. Если логи собирает внешняя система, закладывайте этот объём.

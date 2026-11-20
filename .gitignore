@@ -140,3 +140,4 @@ _NCrunch*
 
 # Секреты развёртывания Data Saver (Docker secrets)
 deploy/data-saver/secrets/
+**/secrets/
