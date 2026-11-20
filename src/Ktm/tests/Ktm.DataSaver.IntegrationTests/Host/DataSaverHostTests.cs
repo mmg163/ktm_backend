@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using System.Net;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
@@ -6,6 +5,7 @@ using Ktm.DataSaver.Health;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;
+using Ktm.DataSaver.IntegrationTests.Support;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Testcontainers.Kafka;
@@ -16,8 +16,6 @@ namespace Ktm.DataSaver.IntegrationTests.Host;
 [Collection(AppCollection.Name)]
 public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postgres)
 {
-    private static readonly TimeSpan Overall = TimeSpan.FromSeconds(90);
-
     private static string EventJson(string id) => """
         {"schemaVersion":1,"source":"skud","sourceEventId":"ID","occurredAt":"2026-11-19T04:58:12Z",
          "eventType":"access_granted","deviceId":"turnstile-01-entry","externalPersonId":"card:0012345678",
@@ -30,50 +28,8 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
         return (response.StatusCode, await response.Content.ReadAsStringAsync());
     }
 
-    private static async Task WaitForAsync(Func<Task<bool>> condition, string what, Func<string>? lastObservation = null)
-    {
-        var deadline = DateTime.UtcNow + Overall;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (await condition()) return;
-            await Task.Delay(200);
-        }
-
-        throw new TimeoutException($"Timed out waiting for: {what}" + (lastObservation is null ? string.Empty : $" (last observed: {lastObservation()})"));
-    }
-
     private static Task WaitReadyAsync(HttpClient client) =>
-        WaitForAsync(async () => (await GetAsync(client, "/health/ready")).Status == HttpStatusCode.OK, "readiness 200");
-
-    private sealed class Counters : IDisposable
-    {
-        private readonly MeterListener _listener = new();
-        private readonly Dictionary<string, long> _values = [];
-
-        public Counters(Meter meter)
-        {
-            _listener.InstrumentPublished = (instrument, listener) =>
-            {
-                if (ReferenceEquals(instrument.Meter, meter)) listener.EnableMeasurementEvents(instrument);
-            };
-            _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
-            {
-                var key = tags.Length == 0 ? instrument.Name : $"{instrument.Name}[{tags[0].Value}]";
-                lock (_values) _values[key] = _values.GetValueOrDefault(key) + value;
-            });
-            _listener.Start();
-        }
-
-        public long this[string key]
-        {
-            get
-            {
-                lock (_values) return _values.GetValueOrDefault(key);
-            }
-        }
-
-        public void Dispose() => _listener.Dispose();
-    }
+        Wait.UntilAsync(async () => (await GetAsync(client, "/health/ready")).Status == HttpStatusCode.OK, "readiness 200");
 
     [Fact]
     public async Task HealthyService_IsReady_AndMetricsMatchTheRun_90Written10Duplicates1Rejected()
@@ -93,12 +49,12 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
         Assert.DoesNotContain("app-test-password", live.Body + ready.Body);
         Assert.DoesNotContain(db.Host!, live.Body + ready.Body);
 
-        using var counters = new Counters(app.Services.GetRequiredService<DataSaverMetrics>().Meter);
+        using var counters = new MetricCounters(app.Services.GetRequiredService<DataSaverMetrics>().Meter);
         for (var i = 0; i < 90; i++) await kafka.ProduceAsync(raw, "skud:" + i, EventJson($"{prefix}-{i}"));
         for (var i = 0; i < 10; i++) await kafka.ProduceAsync(raw, "skud:" + i, EventJson($"{prefix}-{i}"));
         await kafka.ProduceAsync(raw, "bad", "not json");
 
-        await WaitForAsync(
+        await Wait.UntilAsync(
             () => Task.FromResult(counters["ktm.datasaver.messages.read"] >= 101
                                   && counters["ktm.datasaver.messages.rejected[malformed_json]"] == 1
                                   && counters["ktm.datasaver.events.written"] + counters["ktm.datasaver.events.duplicates"] == 100),
@@ -129,7 +85,7 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
 
         await database.StopAsync();
 
-        await WaitForAsync(async () => (await GetAsync(client, "/health/ready")).Status == HttpStatusCode.ServiceUnavailable, "readiness 503");
+        await Wait.UntilAsync(async () => (await GetAsync(client, "/health/ready")).Status == HttpStatusCode.ServiceUnavailable, "readiness 503");
         var ready = await GetAsync(client, "/health/ready");
         var live = await GetAsync(client, "/health/live");
         Assert.Contains("database_unavailable", ready.Body);
@@ -155,7 +111,7 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
         // Ждём события, а не времени: второй consumer вступил в группу, группа снова стабильна.
         using var admin = kafka.NewAdmin();
         var last = string.Empty;
-        await WaitForAsync(async () =>
+        await Wait.UntilAsync(async () =>
         {
             try
             {
@@ -168,7 +124,7 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
                 last = ex.Message;
                 return false;
             }
-        }, "second consumer joined the group", () => last);
+        }, "second consumer joined the group", lastObservation: () => last);
         var ready = await GetAsync(client, "/health/ready");
         var live = await GetAsync(client, "/health/live");
 

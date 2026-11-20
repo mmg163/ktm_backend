@@ -2,6 +2,7 @@ using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Microsoft.Extensions.Logging.Abstractions;
+using Ktm.DataSaver.IntegrationTests.Support;
 using Testcontainers.Kafka;
 
 namespace Ktm.DataSaver.IntegrationTests.Kafka;
@@ -12,6 +13,8 @@ public sealed class KafkaFixture : IAsyncLifetime
     private readonly KafkaContainer _container = new KafkaBuilder("apache/kafka:3.9.1").Build();
 
     public string BootstrapServers => _container.GetBootstrapAddress();
+
+    internal KafkaClient Client => new(BootstrapServers);
 
     public Task InitializeAsync() => _container.StartAsync();
 
