@@ -327,11 +327,19 @@ public sealed class IngestionLoop(
         }
     }
 
-    /// <summary>Координаты пачки для лога: топик, партиция, диапазон offset и число сообщений; без тел сообщений.</summary>
+    /// <summary>
+    /// Координаты пачки для лога: топик, партиция, диапазон offset, число сообщений и первое событие диапазона
+    /// (<c>source</c>, <c>sourceEventId</c>); тел сообщений нет.
+    /// </summary>
     private static string DescribeBatch(IEnumerable<PipelineResult> results) =>
         string.Join("; ", results
             .GroupBy(r => (r.Message.Topic, r.Message.Partition))
-            .Select(g => $"{g.Key.Topic}[{g.Key.Partition}] offsets {g.Min(r => r.Message.Offset)}..{g.Max(r => r.Message.Offset)} ({g.Count()} msgs)"));
+            .Select(g =>
+            {
+                var first = g.OrderBy(r => r.Message.Offset).First();
+                var origin = first.Event is { } e ? $", first source={e.Source} sourceEventId={e.SourceEventId}" : string.Empty;
+                return $"{g.Key.Topic}[{g.Key.Partition}] offsets {g.Min(r => r.Message.Offset)}..{g.Max(r => r.Message.Offset)} ({g.Count()} msgs{origin})";
+            }));
 
     /// <summary>
     /// Решение DeadLetter принимается, только если все сообщения принадлежат текущей пачке и набор реально вырос;

@@ -422,9 +422,9 @@ public class IngestionLoopTests
         await h.RunAsync();
 
         var warning = Assert.Single(h.Logger.Collector.GetSnapshot(), r => r.Message.StartsWith("Write failed (transient)", StringComparison.Ordinal));
-        Assert.Contains("ktm.events.raw[0] offsets 10..11 (2 msgs)", warning.Message);
-        Assert.Contains("ktm.events.raw[1] offsets 4..4 (1 msgs)", warning.Message);
-        Assert.DoesNotContain("e-0-10", warning.Message);
+        Assert.Contains("ktm.events.raw[0] offsets 10..11 (2 msgs, first source=skud sourceEventId=e-0-10)", warning.Message);
+        Assert.Contains("ktm.events.raw[1] offsets 4..4 (1 msgs, first source=skud sourceEventId=e-1-4)", warning.Message);
+        Assert.DoesNotContain("connection reset", warning.Message);
         Assert.True(h.Loop.LastHeartbeat > startedAt);
     }
 }
