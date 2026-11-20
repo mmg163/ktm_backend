@@ -1,0 +1,57 @@
+- name: server.properties
+  ansible.builtin.template:
+    src: server.properties.j2
+    dest: "{{ kafka_conf }}"
+    owner: root
+    group: "{{ kafka_group }}"
+    mode: "0640"
+    backup: true
+  notify: restart kafka
+
+- name: Kafka service enabled
+  ansible.builtin.systemd:
+    name: kafka
+    enabled: true
+    state: started
+
+- name: Apply config now (before topic management)
+  ansible.builtin.meta: flush_handlers
+
+- name: UFW — порт брокера только для разрешённых сетей
+  community.general.ufw:
+    rule: allow
+    proto: tcp
+    port: "{{ kafka_port }}"
+    from_ip: "{{ item.cidr }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ kafka_ufw_sources }}"
+
+- name: Wait for broker
+  ansible.builtin.wait_for:
+    host: "{{ kafka_advertised_host }}"
+    port: "{{ kafka_port }}"
+    timeout: 60
+
+- name: Create topics
+  ansible.builtin.command: >
+    {{ kafka_home }}/bin/kafka-topics.sh --bootstrap-server {{ kafka_advertised_host }}:{{ kafka_port }}
+    --create --if-not-exists --topic {{ item.name }}
+    --partitions {{ item.partitions }} --replication-factor {{ kafka_replication_factor }}
+    --config retention.ms={{ item.retention_ms }}
+  loop: "{{ kafka_topics }}"
+  changed_when: true
+
+- name: Align retention of existing topics
+  ansible.builtin.command: >
+    {{ kafka_home }}/bin/kafka-configs.sh --bootstrap-server {{ kafka_advertised_host }}:{{ kafka_port }}
+    --alter --entity-type topics --entity-name {{ item.name }}
+    --add-config retention.ms={{ item.retention_ms }}
+  loop: "{{ kafka_topics }}"
+  changed_when: false
+
+- name: Remove unwanted topics
+  ansible.builtin.shell: >
+    {{ kafka_home }}/bin/kafka-topics.sh --bootstrap-server {{ kafka_advertised_host }}:{{ kafka_port }}
+    --delete --topic {{ item }} --if-exists
+  loop: "{{ kafka_topics_absent }}"
+  changed_when: false
