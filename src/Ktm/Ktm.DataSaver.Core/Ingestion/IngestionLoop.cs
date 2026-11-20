@@ -272,7 +272,8 @@ public sealed class IngestionLoop(
             try
             {
                 await store.WriteAsync(items.Select(i => i.Event).ToList(), IoToken);
-                // Успешная запись - признак жизни цикла: медленная, но завершившаяся запись не должна давать ложный loop_stalled.
+                // Во время самой записи отметки нет: от ложного loop_stalled защищает валидатор (Connect + Command < LiveStaleSeconds).
+                // Touch после записи нужен, чтобы ожидания записи и публикации (и commit) не суммировались в одно окно без отметки.
                 Touch();
                 return true;
             }

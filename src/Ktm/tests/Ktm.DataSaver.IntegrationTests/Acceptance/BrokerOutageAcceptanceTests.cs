@@ -85,6 +85,7 @@ public sealed class BrokerOutageAcceptanceTests(PausableKafkaFixture broker, Pos
                 s["DataSaver:Health:LiveStaleSeconds"] = "10";
                 s["DataSaver:Postgres:ConnectTimeoutSeconds"] = "2";
                 s["DataSaver:Postgres:CommandTimeoutSeconds"] = "5";
+                s["DataSaver:Kafka:ProducerMessageTimeoutMs"] = "5000";
             },
             services: s =>
             {

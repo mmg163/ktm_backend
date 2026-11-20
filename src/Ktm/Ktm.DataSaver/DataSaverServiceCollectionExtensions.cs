@@ -25,7 +25,7 @@ public static class DataSaverServiceCollectionExtensions
         var root = configuration.GetSection(DataSaverOptions.SectionName);
 
         AddOptions<KafkaOptions>(services, root.GetSection("Kafka"), DataSaverChecks.Kafka)
-            .PostConfigure(ResolveSaslPasswordFile);
+            .PostConfigure(options => options.ResolveSaslPasswordFile());
         AddOptions<PostgresOptions>(services, root.GetSection("Postgres"), DataSaverChecks.Postgres);
         AddOptions<BatchOptions>(services, root.GetSection("Batch"), DataSaverChecks.Batch);
         AddOptions<BackoffOptions>(services, root.GetSection("Backoff"), DataSaverChecks.Backoff);
@@ -110,28 +110,5 @@ public static class DataSaverServiceCollectionExtensions
     {
         services.AddSingleton<IValidateOptions<T>>(new OptionsValidator<T>(check));
         return services.AddOptions<T>().Bind(section).ValidateOnStart();
-    }
-
-    private static void ResolveSaslPasswordFile(KafkaOptions options)
-    {
-        if (string.IsNullOrWhiteSpace(options.SaslPasswordFile))
-        {
-            return;
-        }
-
-        if (!string.IsNullOrEmpty(options.SaslPassword))
-        {
-            throw new InvalidOperationException("DataSaver__Kafka__SaslPassword and DataSaver__Kafka__SaslPasswordFile are mutually exclusive.");
-        }
-
-        try
-        {
-            options.SaslPassword = File.ReadAllText(options.SaslPasswordFile).TrimEnd('\r', '\n');
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Только имя настройки и путь; содержимое файла в сообщение не попадает.
-            throw new InvalidOperationException($"DataSaver__Kafka__SaslPasswordFile '{options.SaslPasswordFile}' cannot be read: {ex.GetType().Name}.");
-        }
     }
 }

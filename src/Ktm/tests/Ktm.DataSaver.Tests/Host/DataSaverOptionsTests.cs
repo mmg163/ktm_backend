@@ -149,14 +149,25 @@ public class DataSaverOptionsTests
         }
     }
 
+    // Ожидания записи в БД (Connect + Command) и публикации (ceil(P / 1000)) не суммируются: сравнивается максимум.
+    // Равенство порогу - отказ. Столбцы: Connect, Command, ProducerMessageTimeoutMs, LiveStaleSeconds, валидно ли.
     [Theory]
-    [InlineData(45, false)]
-    [InlineData(46, true)]
-    public void LiveStaleSeconds_MustExceedConnectPlusCommandTimeout(int liveStaleSeconds, bool valid)
+    [InlineData(15, 30, 30000, 46, true)]      // по умолчанию: БД 45 с < 46
+    [InlineData(15, 30, 30000, 45, false)]     // БД 45 с = порогу
+    [InlineData(15, 30, 59000, 60, true)]      // Kafka 59 с < 60
+    [InlineData(15, 30, 60000, 60, false)]     // Kafka 60 с = порогу
+    [InlineData(15, 30, 59001, 60, false)]     // ceil(59.001) = 60
+    [InlineData(1, 1, 60000, 60, false)]       // максимум - Kafka при мелком Connect + Command
+    [InlineData(15, 45, 1000, 60, false)]      // максимум - БД при мелком P
+    [InlineData(15, 30, 45000, 60, true)]      // сумма 90 больше порога, максимум 45 - меньше: проходит
+    [InlineData(15, 30, int.MaxValue, 60, false)] // без переполнения
+    public void LiveStaleSeconds_MustExceedTheLongestBlockingWait_MaxOfDatabaseAndPublish(
+        int connect, int command, int producerMs, int liveStaleSeconds, bool valid)
     {
         var values = Valid();
-        values["DataSaver:Postgres:ConnectTimeoutSeconds"] = "15";
-        values["DataSaver:Postgres:CommandTimeoutSeconds"] = "30";
+        values["DataSaver:Postgres:ConnectTimeoutSeconds"] = connect.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        values["DataSaver:Postgres:CommandTimeoutSeconds"] = command.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        values["DataSaver:Kafka:ProducerMessageTimeoutMs"] = producerMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
         values["DataSaver:Health:LiveStaleSeconds"] = liveStaleSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         if (valid)
@@ -170,7 +181,58 @@ public class DataSaverOptionsTests
         Assert.Contains("DataSaver__Health__LiveStaleSeconds", message);
         Assert.Contains("DataSaver__Postgres__ConnectTimeoutSeconds", message);
         Assert.Contains("DataSaver__Postgres__CommandTimeoutSeconds", message);
+        Assert.Contains("DataSaver__Kafka__ProducerMessageTimeoutMs", message);
         Assert.DoesNotContain(Secret, message);
+    }
+
+    [Fact]
+    public void KafkaSaslPassword_ConflictAndUnreadableFile_AreValidationFailuresWithoutSecrets()
+    {
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, "from-file");
+            var values = Valid();
+            values["DataSaver:Kafka:SaslPassword"] = Secret;
+            values["DataSaver:Kafka:SaslPasswordFile"] = file;
+            var conflict = StartupFailure(values);
+            Assert.Contains("DataSaver__Kafka__SaslPassword", conflict);
+            Assert.Contains("DataSaver__Kafka__SaslPasswordFile", conflict);
+            Assert.DoesNotContain(Secret, conflict);
+            Assert.DoesNotContain("from-file", conflict);
+
+            values["DataSaver:Kafka:SaslPassword"] = null;
+            values["DataSaver:Kafka:SaslPasswordFile"] = file + ".missing";
+            var unreadable = StartupFailure(values);
+            Assert.Contains("DataSaver__Kafka__SaslPasswordFile", unreadable);
+            Assert.Contains(".missing", unreadable);
+
+            // Читаемый пустой файл - не ошибка чтения.
+            File.WriteAllText(file, string.Empty);
+            values["DataSaver:Kafka:SaslPasswordFile"] = file;
+            using var provider = Build(values);
+            provider.GetRequiredService<IStartupValidator>().Validate();
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void PostgresSettingErrors_NameSettingsInEnvironmentForm()
+    {
+        var values = Valid();
+        values["DataSaver:Postgres:Port"] = "70000";
+        var port = StartupFailure(values);
+
+        values["DataSaver:Postgres:Port"] = "5432";
+        values["DataSaver:Postgres:SslMode"] = "Sometimes";
+        var sslMode = StartupFailure(values);
+
+        Assert.Contains("DataSaver__Postgres__Port", port);
+        Assert.Contains("DataSaver__Postgres__SslMode", sslMode);
+        Assert.DoesNotContain("Postgres:", port + sslMode);
     }
 
     [Fact]

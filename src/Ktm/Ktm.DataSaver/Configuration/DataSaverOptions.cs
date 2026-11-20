@@ -98,6 +98,7 @@ internal static class DataSaverChecks
         if (string.IsNullOrWhiteSpace(o.GroupId)) yield return $"{p}GroupId must not be empty.";
         if (o.SessionTimeoutMs < 1) yield return $"{p}SessionTimeoutMs must be positive.";
         if (o.ProducerMessageTimeoutMs < 1) yield return $"{p}ProducerMessageTimeoutMs must be positive.";
+        if (o.SaslPasswordError is not null) yield return o.SaslPasswordError;
         if (o.SecurityProtocol is not null && Rejects(() => KafkaConfigExtensions.ParseSecurityProtocol(o.SecurityProtocol)))
         {
             yield return $"{p}SecurityProtocol has an unsupported value (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).";
@@ -119,7 +120,7 @@ internal static class DataSaverChecks
         }
         catch (InvalidOperationException ex)
         {
-            error = ex.Message.Replace("Postgres:", "DataSaver__Postgres__", StringComparison.Ordinal);
+            error = ex.Message;
         }
 
         if (error is not null) yield return error;
@@ -157,22 +158,29 @@ internal static class DataSaverChecks
     }
 
     /// <summary>
-    /// Запись пачки (подключение + команда) не отмечает heartbeat и в худшем случае длится Connect + Command секунд;
-    /// если liveness-порог не больше, штатно долгая запись при недоступной БД убила бы процесс перезапуском, который БД не лечит.
+    /// Запись пачки в БД (подключение + команда: Connect + Command секунд) и публикация в rejected (до
+    /// ProducerMessageTimeoutMs) - блокирующие ожидания, во время которых heartbeat не отмечается; после каждого из них
+    /// цикл отмечается (Touch), поэтому ожидания не суммируются и худший случай - максимум из двух. Если liveness-порог
+    /// не больше него, штатно долгое ожидание при недоступном приёмнике убило бы процесс перезапуском, который его не лечит.
     /// </summary>
-    public static IEnumerable<string> LiveStale(HealthOptions health, PostgresOptions postgres)
+    public static IEnumerable<string> LiveStale(HealthOptions health, PostgresOptions postgres, KafkaOptions kafka)
     {
-        if (health.LiveStaleSeconds < 1 || postgres.ConnectTimeoutSeconds < 1 || postgres.CommandTimeoutSeconds < 1)
+        if (health.LiveStaleSeconds < 1 || postgres.ConnectTimeoutSeconds < 1 || postgres.CommandTimeoutSeconds < 1
+            || kafka.ProducerMessageTimeoutMs < 1)
         {
             // Сами значения некорректны: об этом скажут проверки своих опций.
             yield break;
         }
 
-        var worst = (long)postgres.ConnectTimeoutSeconds + postgres.CommandTimeoutSeconds;
+        var databaseWait = (long)postgres.ConnectTimeoutSeconds + postgres.CommandTimeoutSeconds;
+        var publishWait = (long)Math.Ceiling(kafka.ProducerMessageTimeoutMs / 1000.0);
+        var worst = Math.Max(databaseWait, publishWait);
         if (worst >= health.LiveStaleSeconds)
         {
-            yield return "DataSaver__Health__LiveStaleSeconds must be greater than DataSaver__Postgres__ConnectTimeoutSeconds + " +
-                         $"DataSaver__Postgres__CommandTimeoutSeconds ({worst} s): a long database write does not touch the liveness heartbeat.";
+            yield return "DataSaver__Health__LiveStaleSeconds must be greater than the longest blocking wait of the loop: " +
+                         $"max(DataSaver__Postgres__ConnectTimeoutSeconds + DataSaver__Postgres__CommandTimeoutSeconds = {databaseWait} s, " +
+                         $"ceil(DataSaver__Kafka__ProducerMessageTimeoutMs / 1000) = {publishWait} s) = {worst} s. " +
+                         "A database write and a publish to the rejected topic are blocking waits that do not touch the liveness heartbeat.";
         }
     }
 
@@ -207,22 +215,24 @@ internal static class DataSaverChecks
 }
 
 /// <summary>Согласованность <see cref="HealthOptions"/> с таймаутами БД: проверка нескольких секций при старте.</summary>
-internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> postgres) : IValidateOptions<HealthOptions>
+internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> postgres, IOptions<KafkaOptions> kafka) : IValidateOptions<HealthOptions>
 {
     public ValidateOptionsResult Validate(string? name, HealthOptions options)
     {
-        PostgresOptions value;
+        PostgresOptions postgresValue;
+        KafkaOptions kafkaValue;
         try
         {
-            value = postgres.Value;
+            postgresValue = postgres.Value;
+            kafkaValue = kafka.Value;
         }
         catch (OptionsValidationException)
         {
-            // Некорректные настройки Postgres сообщит их собственная проверка.
+            // Некорректные настройки Postgres или Kafka сообщит их собственная проверка.
             return ValidateOptionsResult.Success;
         }
 
-        var failures = DataSaverChecks.LiveStale(options, value).ToList();
+        var failures = DataSaverChecks.LiveStale(options, postgresValue, kafkaValue).ToList();
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 }
