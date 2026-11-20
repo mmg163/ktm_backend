@@ -220,7 +220,10 @@ At-least-once + идемпотентная запись = эффект «ров�
 
 ### D-11. Конфигурация (только окружение)
 
-Секции `DataSaver__*`; значения по умолчанию - в `appsettings.json` без секретов; секреты - из окружения или из файла
+Секции `DataSaver__*`; значения по умолчанию живут в классах options (`DataSaverOptions`, `KafkaOptions`,
+`PostgresOptions`) и проверяются при старте (`ValidateOnStart`); шаблон окружения - `deploy/data-saver/.env.example`;
+`appsettings.json` содержит только настройки логирования. Причина: единый источник значений по умолчанию и валидация
+рядом с ними (значение и его допустимый диапазон не расходятся между файлами). Секреты - из окружения или из файла
 (`...__PasswordFile` / `*_FILE`). Обязательные без значения по умолчанию: `DataSaver__Kafka__BootstrapServers`,
 `DataSaver__Postgres__Host`, `DataSaver__Postgres__Database`, `DataSaver__Postgres__Username`,
 `DataSaver__Postgres__Password` (или `PasswordFile`). Необязательные: `Kafka__GroupId` (`ktm-data-saver`),

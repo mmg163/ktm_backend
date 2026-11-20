@@ -26,8 +26,9 @@
 
 Все настройки - переменные `DataSaver__<Секция>__<Имя>` (двойное подчёркивание - разделитель уровней). Источник истины -
 `src/Ktm/Ktm.DataSaver/Configuration/DataSaverOptions.cs`, `src/Ktm/Ktm.DataSaver.Infrastructure/Kafka/KafkaOptions.cs`,
-`src/Ktm/Ktm.DataSaver.Infrastructure/Postgres/PostgresOptions.cs`. Значения по умолчанию в `appsettings.json` не заданы
-(там только уровни логирования); умолчания ниже - из кода. Ошибка в настройках - отказ запуска с сообщением, где названа
+`src/Ktm/Ktm.DataSaver.Infrastructure/Postgres/PostgresOptions.cs`. Значения по умолчанию заданы в этих классах options и
+проверяются при старте (ADR-0002, D-11); `appsettings.json` содержит только уровни логирования; шаблон окружения -
+`deploy/data-saver/.env.example`. Ошибка в настройках - отказ запуска с сообщением, где названа
 переменная (значения секретов в сообщения не попадают).
 
 ### Обязательные
