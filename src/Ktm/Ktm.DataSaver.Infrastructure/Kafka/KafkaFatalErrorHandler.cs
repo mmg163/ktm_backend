@@ -14,6 +14,9 @@ public sealed class KafkaFatalErrorHandler(IProcessTerminator terminator, ILogge
 
     private int _terminated;
 
+    /// <summary>Была ли получена фатальная ошибка клиента (D-10: liveness = 503).</summary>
+    public bool IsFatal => Volatile.Read(ref _terminated) == 1;
+
     /// <summary>true - ошибка была фатальной и запрошено завершение.</summary>
     public bool Handle(Error error)
     {

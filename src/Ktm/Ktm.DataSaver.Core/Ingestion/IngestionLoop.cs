@@ -41,6 +41,8 @@ public sealed class IngestionLoop(
 {
     private readonly OffsetTracker _tracker = new();
 
+    private sealed record WriteItem(ConsumedMessage Message, ParsedEvent Event);
+
     // Предел остановки: отсчёт стартует в момент сигнала stop (см. RunAsync); до него токен не отменяется.
     private readonly CancellationTokenSource _deadline = new();
     private CancellationToken _stop;
@@ -49,12 +51,21 @@ public sealed class IngestionLoop(
     private int _retryCount;
     private int _started;
     private bool _immediateRetryGranted;
+    private long _heartbeatTicks = timeProvider.GetUtcNow().UtcTicks;
 
     /// <summary>Состояние для readiness: <c>Degraded</c> = 503.</summary>
     public IngestionState State => _state;
 
     /// <summary>Число неудачных попыток текущей пачки (0 при нормальной работе).</summary>
     public int RetryCount => Volatile.Read(ref _retryCount);
+
+    /// <summary>
+    /// Момент последней отметки цикла (D-10, liveness): начало итерации и каждая итерация ожидания backoff, в том числе
+    /// в состоянии <c>Degraded</c>. Читается из потока health-проверки.
+    /// </summary>
+    public DateTimeOffset LastHeartbeat => new(Interlocked.Read(ref _heartbeatTicks), TimeSpan.Zero);
+
+    private void Touch() => Interlocked.Exchange(ref _heartbeatTicks, timeProvider.GetUtcNow().UtcTicks);
 
     private CancellationToken IoToken => _deadline.Token;
 
@@ -78,6 +89,7 @@ public sealed class IngestionLoop(
         {
             while (!stop.IsCancellationRequested)
             {
+                Touch();
                 DrainAssignmentChanges();
 
                 var wait = batcher.TimeUntilDeadline() is { } left && left < options.PollInterval ? left : options.PollInterval;
@@ -248,18 +260,18 @@ public sealed class IngestionLoop(
         while (true)
         {
             DrainAssignmentChanges();
-            var events = results
+            var items = results
                 .Where(r => r.Event is not null && !deadLettered.Contains(r.Message))
-                .Select(r => r.Event!)
+                .Select(r => new WriteItem(r.Message, r.Event!))
                 .ToList();
-            if (events.Count == 0)
+            if (items.Count == 0)
             {
                 return true;
             }
 
             try
             {
-                await store.WriteAsync(events, IoToken);
+                await store.WriteAsync(items.Select(i => i.Event).ToList(), IoToken);
                 return true;
             }
             catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
@@ -270,6 +282,7 @@ public sealed class IngestionLoop(
             {
                 var attempt = Interlocked.Increment(ref _retryCount);
                 var errorClass = WriteErrorClassifier.Classify(ex);
+                LogWriteFailure(ex, errorClass, attempt, items);
 
                 if (errorClass == WriteErrorClass.Data)
                 {
@@ -291,20 +304,15 @@ public sealed class IngestionLoop(
 
                     if (decision.Kind == WriteFailureKind.DeadLetter && TryAcceptDeadLetter(context, decision, deadLettered))
                     {
-                        logger.LogError(ex, "Write failed with data error; {Count} messages handed over to the failure handler", decision.DeadLetterItems.Count);
+                        logger.LogError("Write data error: {Count} messages handed over to the failure handler", decision.DeadLetterItems.Count);
                         continue;
                     }
 
-                    logger.LogError(ex, "Write failed with data error, attempt {Attempt}; partition stays blocked (no failure handler progress)", attempt);
+                    logger.LogError("Write failure handler made no progress, attempt {Attempt}; partition stays blocked", attempt);
                 }
                 else if (errorClass == WriteErrorClass.FatalConfig)
                 {
-                    logger.LogError(ex, "Write failed with configuration/permission error, attempt {Attempt}", attempt);
                     adminNotifier.NotifyFatalConfig(ex, attempt);
-                }
-                else
-                {
-                    logger.LogWarning(ex, "Write failed (transient), attempt {Attempt}", attempt);
                 }
 
                 EnterDegraded();
@@ -313,6 +321,35 @@ public sealed class IngestionLoop(
                     return false;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Лог сбоя записи (6.5): общая запись (класс, попытка, размер пачки), затем запись на каждую группу (Topic, Partition)
+    /// принятых событий с первым offset, последним offset, числом и происхождением первого события. Тел сообщений нет.
+    /// Для класса «данные» исключение в лог не передаётся (текст может содержать значения из строки): тип и SQLSTATE.
+    /// </summary>
+    private void LogWriteFailure(Exception ex, WriteErrorClass errorClass, int attempt, IReadOnlyList<WriteItem> items)
+    {
+        var level = errorClass == WriteErrorClass.Transient ? LogLevel.Warning : LogLevel.Error;
+        if (errorClass == WriteErrorClass.Data)
+        {
+            logger.Log(level, "Batch write failed: {ErrorClass}, {ErrorType}, {SqlState}, attempt {Attempt}, batch size {BatchSize}",
+                errorClass, ex.GetType().Name, WriteErrorClassifier.FindSqlState(ex), attempt, items.Count);
+        }
+        else
+        {
+            logger.Log(level, ex, "Batch write failed: {ErrorClass}, attempt {Attempt}, batch size {BatchSize}", errorClass, attempt, items.Count);
+        }
+
+        foreach (var group in items.GroupBy(i => (i.Message.Topic, i.Message.Partition)))
+        {
+            var ordered = group.OrderBy(i => i.Message.Offset).ToList();
+            var first = ordered[0];
+            logger.Log(level,
+                "Batch write failed for partition: {Topic} {Partition} {Offset} {LastOffset} {Count} {Source} {SourceEventId}",
+                group.Key.Topic, group.Key.Partition, first.Message.Offset, ordered[^1].Message.Offset, ordered.Count,
+                first.Event.Source, first.Event.SourceEventId);
         }
     }
 
@@ -341,7 +378,7 @@ public sealed class IngestionLoop(
             DrainAssignmentChanges();
             var rejected = results
                 .Where(r => !r.Verdict.IsAccepted)
-                .Select(r => new RejectedMessage(r.Message, r.Verdict.Rejection!))
+                .Select(r => new RejectedMessage(r.Message, r.Verdict.Rejection!, r.Origin))
                 .ToList();
             if (rejected.Count == 0)
             {
@@ -410,6 +447,7 @@ public sealed class IngestionLoop(
         var until = timeProvider.GetUtcNow() + delay;
         while (true)
         {
+            Touch();
             var remaining = until - timeProvider.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {

@@ -1,6 +1,9 @@
 using Ktm.DataSaver.Core.Batching;
 using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using static Ktm.DataSaver.Tests.Ingestion.Harness;
 
 namespace Ktm.DataSaver.Tests.Ingestion;
@@ -408,5 +411,75 @@ public class IngestionLoopTests
         await h.RunAsync();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => h.Loop.RunAsync(CancellationToken.None));
+    }
+
+    private static Dictionary<string, string?> Fields(FakeLogRecord record) =>
+        record.StructuredState!.ToDictionary(p => p.Key, p => p.Value);
+
+    [Fact]
+    public async Task WriteFailure_LogsRecordPerPartitionGroupOfAcceptedEvents_AndHeartbeatAdvances()
+    {
+        var h = new Harness(batchSize: 5);
+        var startedAt = h.Loop.LastHeartbeat;
+        // Первое сообщение каждой партиции отбраковано: координаты группы берутся по принятым событиям.
+        h.Source.Enqueue(Garbage(0, 5), Valid(0, 6), Valid(0, 7), Garbage(1, 3), Valid(1, 4));
+        h.Store.Fail = call => call == 1 ? new IOException("connection reset") : null;
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        var records = h.Logger.Collector.GetSnapshot().Where(r => r.Level == LogLevel.Warning && Fields(r).ContainsKey("BatchSize")).ToList();
+        var main = Assert.Single(records);
+        Assert.IsType<IOException>(main.Exception);
+        Assert.Equal(("1", "3"), (Fields(main)["Attempt"], Fields(main)["BatchSize"]));
+
+        var groups = h.Logger.Collector.GetSnapshot().Where(r => Fields(r).ContainsKey("LastOffset")).OrderBy(r => Fields(r)["Partition"]).ToList();
+        Assert.Equal(2, groups.Count);
+        Assert.All(groups, g => Assert.Null(g.Exception));
+        Assert.Equal(
+            ("ktm.events.raw", "0", "6", "7", "2", "skud", "e-0-6"),
+            (Fields(groups[0])["Topic"], Fields(groups[0])["Partition"], Fields(groups[0])["Offset"], Fields(groups[0])["LastOffset"],
+                Fields(groups[0])["Count"], Fields(groups[0])["Source"], Fields(groups[0])["SourceEventId"]));
+        Assert.Equal(
+            ("1", "4", "4", "1", "skud", "e-1-4"),
+            (Fields(groups[1])["Partition"], Fields(groups[1])["Offset"], Fields(groups[1])["LastOffset"],
+                Fields(groups[1])["Count"], Fields(groups[1])["Source"], Fields(groups[1])["SourceEventId"]));
+        Assert.True(h.Loop.LastHeartbeat > startedAt);
+    }
+
+    [Fact]
+    public async Task DataWriteFailure_NeverLogsExceptionText_OnlyErrorTypeAndSqlState()
+    {
+        const string secret = "Key (card)=(0012345678) ФИО Иванов";
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Fail = call => call == 1 ? new LeakyDbException(secret, "23505") : null;
+        h.Handler.Decide = ctx => WriteFailureDecision.DeadLetter([ctx.Batch[1]]);
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        var records = h.Logger.Collector.GetSnapshot();
+        var failure = Assert.Single(records, r => Fields(r).ContainsKey("SqlState"));
+        Assert.Equal(("LeakyDbException", "23505"), (Fields(failure)["ErrorType"], Fields(failure)["SqlState"]));
+        Assert.All(records, r =>
+        {
+            Assert.Null(r.Exception);
+            Assert.DoesNotContain("Иванов", r.Message);
+            Assert.DoesNotContain("0012345678", r.Message);
+            Assert.All(r.StructuredState!, p => Assert.DoesNotContain("Иванов", p.Value ?? string.Empty));
+        });
+    }
+
+    [Fact]
+    public async Task StageRejection_PassesOriginToPublisher_ButUnparsedMessageHasNone()
+    {
+        var h = new Harness(3, new RejectingStage());
+        h.Source.Enqueue(Valid(0, 0), Garbage(0, 1));
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal([new EventOrigin("skud", "e-0-0"), null], h.Publisher.Origins);
     }
 }

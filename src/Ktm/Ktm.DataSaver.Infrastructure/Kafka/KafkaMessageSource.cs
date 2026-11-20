@@ -20,6 +20,11 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private readonly Lock _gate = new();
     private readonly List<TopicPartitionKey> _assigned = [];
     private readonly List<TopicPartitionKey> _revoked = [];
+    // Кэш текущего назначения для health-потока: обновляется обработчиками ребаланса, consumer.Assignment оттуда не читается.
+    private readonly HashSet<TopicPartitionKey> _current = [];
+    private readonly string _topic;
+    private IAdminClient? _admin;
+    private int _disposed;
     private long _lastConsumeErrorLogTicks = long.MinValue;
     private static readonly long ConsumeErrorLogIntervalTicks = (long)(TimeSpan.FromSeconds(30).TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
 
@@ -27,6 +32,19 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     {
         _fatalHandler = fatalHandler;
         _logger = logger;
+        _topic = options.Topic;
+
+        _consumer = new ConsumerBuilder<byte[], byte[]>(BuildConfig(options))
+            .SetErrorHandler((_, error) => fatalHandler.Handle(error))
+            .SetPartitionsAssignedHandler((_, partitions) => OnAssigned(partitions))
+            .SetPartitionsRevokedHandler((_, partitions) => OnRevoked(partitions.Select(p => p.TopicPartition)))
+            .SetPartitionsLostHandler((_, partitions) => OnRevoked(partitions.Select(p => p.TopicPartition)))
+            .Build();
+        _consumer.Subscribe(options.Topic);
+    }
+
+    internal static ConsumerConfig BuildConfig(KafkaOptions options)
+    {
         var config = new ConsumerConfig
         {
             GroupId = options.GroupId,
@@ -37,14 +55,41 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
             AllowAutoCreateTopics = false,
             SessionTimeoutMs = options.SessionTimeoutMs,
         }.ApplyConnection(options);
+        if (!string.IsNullOrWhiteSpace(options.GroupInstanceId))
+        {
+            config.GroupInstanceId = options.GroupInstanceId;
+        }
 
-        _consumer = new ConsumerBuilder<byte[], byte[]>(config)
-            .SetErrorHandler((_, error) => fatalHandler.Handle(error))
-            .SetPartitionsAssignedHandler((_, partitions) => Record(_assigned, partitions))
-            .SetPartitionsRevokedHandler((_, partitions) => Record(_revoked, partitions.Select(p => p.TopicPartition)))
-            .SetPartitionsLostHandler((_, partitions) => Record(_revoked, partitions.Select(p => p.TopicPartition)))
-            .Build();
-        _consumer.Subscribe(options.Topic);
+        return config;
+    }
+
+    /// <summary>Consumer подписан и получил назначение (по кэшу обработчиков ребаланса; безопасно из любого потока).</summary>
+    public bool HasAssignment
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _current.Count > 0;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Запрос метаданных топика через клиент, зависимый от handle consumer: проверка связи с брокером для readiness.
+    /// Вызывать вне потока цикла. После остановки бросает <see cref="ObjectDisposedException"/>.
+    /// </summary>
+    public void ProbeBroker(TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        IAdminClient admin;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
+            admin = _admin ??= new DependentAdminClientBuilder(_consumer.Handle).Build();
+        }
+
+        admin.GetMetadata(_topic, timeout);
     }
 
     public IReadOnlyCollection<TopicPartitionKey> Assignment =>
@@ -148,6 +193,17 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            _admin?.Dispose();
+            _admin = null;
+        }
+
         try
         {
             _consumer.Close();
@@ -163,11 +219,24 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private static TopicPartition[] ToPartitions(IReadOnlyCollection<TopicPartitionKey> keys) =>
         keys.Select(k => new TopicPartition(k.Topic, k.Partition)).ToArray();
 
-    private void Record(List<TopicPartitionKey> target, IEnumerable<TopicPartition> partitions)
+    internal void OnAssigned(IEnumerable<TopicPartition> partitions)
     {
+        var keys = partitions.Select(p => new TopicPartitionKey(p.Topic, p.Partition.Value)).ToArray();
         lock (_gate)
         {
-            target.AddRange(partitions.Select(p => new TopicPartitionKey(p.Topic, p.Partition.Value)));
+            _assigned.AddRange(keys);
+            _current.UnionWith(keys);
+        }
+    }
+
+    /// <summary>Отзыв и потеря партиций: для цикла и для кэша назначения это одно и то же.</summary>
+    internal void OnRevoked(IEnumerable<TopicPartition> partitions)
+    {
+        var keys = partitions.Select(p => new TopicPartitionKey(p.Topic, p.Partition.Value)).ToArray();
+        lock (_gate)
+        {
+            _revoked.AddRange(keys);
+            _current.ExceptWith(keys);
         }
     }
 }

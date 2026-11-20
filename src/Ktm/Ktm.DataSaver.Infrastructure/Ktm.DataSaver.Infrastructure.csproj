@@ -10,6 +10,10 @@
     </ItemGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="Ktm.DataSaver.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <ProjectReference Include="..\Ktm.DataSaver.Core\Ktm.DataSaver.Core.csproj" />
     </ItemGroup>
 

@@ -49,7 +49,7 @@ public sealed class PostgresOptions
         if (ConnectTimeoutSeconds < 1) throw new InvalidOperationException("Postgres:ConnectTimeoutSeconds must be positive.");
         if (MinPoolSize < 0 || MaxPoolSize < 1 || MinPoolSize > MaxPoolSize)
         {
-            throw new InvalidOperationException("Postgres pool sizes must satisfy 0 <= MinPoolSize <= MaxPoolSize and MaxPoolSize >= 1.");
+            throw new InvalidOperationException("Postgres:MinPoolSize and Postgres:MaxPoolSize must satisfy 0 <= MinPoolSize <= MaxPoolSize and MaxPoolSize >= 1.");
         }
 
         if (KeepAliveSeconds < 0) throw new InvalidOperationException("Postgres:KeepAliveSeconds must not be negative.");

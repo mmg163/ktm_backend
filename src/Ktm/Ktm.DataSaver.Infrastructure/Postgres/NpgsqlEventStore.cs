@@ -5,6 +5,12 @@ using NpgsqlTypes;
 
 namespace Ktm.DataSaver.Infrastructure.Postgres;
 
+/// <summary>Запись пачки с итогом по числу добавленных строк (для метрик); порт Core <see cref="IEventStore"/> остаётся без числа.</summary>
+public interface IBatchWriter
+{
+    Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken);
+}
+
 /// <summary>Итог записи пачки: сколько строк реально добавлено (дубли не считаются).</summary>
 public readonly record struct EventWriteResult(int EventsInserted, int CorrectionsInserted);
 
@@ -13,7 +19,7 @@ public readonly record struct EventWriteResult(int EventsInserted, int Correctio
 /// один NpgsqlBatch из двух команд. Идемпотентность - уникальные индексы БД и <c>ON CONFLICT DO NOTHING</c>.
 /// Нужны только права SELECT и INSERT; UPDATE/DELETE не используются.
 /// </summary>
-public sealed class NpgsqlEventStore : IEventStore
+public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
 {
     private const string InsertEventsSql = """
         INSERT INTO ktm.events (event_id, source, source_event_id, occurred_at, received_at, event_type, device_id,
