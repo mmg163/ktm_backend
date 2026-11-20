@@ -20,7 +20,7 @@ public sealed class KafkaRejectionPublisherTests(KafkaFixture kafka)
     {
         var rejectedTopic = await kafka.CreateTopicAsync("ktm.events.rejected");
         using var publisher = new KafkaRejectionPublisher(
-            kafka.Options("unused", "g", rejectedTopic), kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance);
+            kafka.Options("unused", "g", rejectedTopic), kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
 
         var result = await publisher.PublishAsync([Rejected("{broken")], CancellationToken.None);
 
@@ -53,7 +53,7 @@ public sealed class KafkaRejectionPublisherTests(KafkaFixture kafka)
         var options = kafka.Options("unused", "g");
         options.BootstrapServers = "127.0.0.1:1";
         options.ProducerMessageTimeoutMs = 2000;
-        using var publisher = new KafkaRejectionPublisher(options, kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance);
+        using var publisher = new KafkaRejectionPublisher(options, kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
 
         var result = await publisher.PublishAsync([Rejected("{broken")], CancellationToken.None);
 
@@ -67,7 +67,7 @@ public sealed class KafkaRejectionPublisherTests(KafkaFixture kafka)
         var defaultTopic = await kafka.CreateTopicAsync("ktm.events.rejected");
         var custom = await kafka.CreateTopicAsync("ktm.events.custom-rejected");
         using var publisher = new KafkaRejectionPublisher(
-            kafka.Options("unused", "g", defaultTopic), kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance);
+            kafka.Options("unused", "g", defaultTopic), kafka.NewFatalHandler(), NullLogger<KafkaRejectionPublisher>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
 
         var result = await publisher.PublishAsync([Rejected("a"), Rejected("b", custom)], CancellationToken.None);
 

@@ -15,8 +15,10 @@ public sealed class KafkaMessageSourceUnitTests
 
     private static KafkaMessageSource Create() => new(
         new KafkaOptions { BootstrapServers = "localhost:1" },
-        new KafkaFatalErrorHandler(new NoopTerminator(), new FakeLogger<KafkaFatalErrorHandler>()),
-        new FakeLogger<KafkaMessageSource>());
+        new KafkaFatalErrorHandler(new NoopTerminator(), new FakeLogger<KafkaFatalErrorHandler>(), Throttle),
+        new FakeLogger<KafkaMessageSource>(), Throttle);
+
+    private static LogThrottle Throttle => new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval);
 
     [Fact]
     public void HasAssignment_FollowsRebalanceHandlers_WithoutAskingTheConsumer()

@@ -8,31 +8,35 @@ namespace Ktm.DataSaver.Infrastructure.Kafka;
 /// Warning -> Warning, Notice/Info -> Debug, Debug -> Trace. Транспортные сообщения (FAIL, TRANSPORT, BROKERFAIL,
 /// CONNECT) повторяются на каждую попытку переподключения к каждому брокеру: пока брокер недоступен, они идут
 /// не чаще раза в 30 с на фасет и уровнем Warning (причину сбоя в любом случае сообщает error-callback). Остальные
-/// ошибки и Critical не подавляются. Текст сообщения клиент формирует без значений конфигурации (пароли в него не попадают).
+/// ошибки и Critical не подавляются. Подавление идёт по ключу (фасет): сообщение с тем же фасетом, но другим текстом,
+/// в течение окна подавляется тоже.
 /// </summary>
-internal sealed class KafkaNativeLogBridge(ILogger logger, TimeProvider timeProvider)
+internal sealed class KafkaNativeLogBridge(ILogger logger, LogThrottle throttle)
 {
-    internal static readonly TimeSpan ThrottleInterval = TimeSpan.FromSeconds(30);
-
     private static readonly HashSet<string> TransportFacilities = new(StringComparer.OrdinalIgnoreCase)
     {
         "FAIL", "TRANSPORT", "BROKERFAIL", "CONNECT",
     };
 
-    private readonly LogThrottle _throttle = new(timeProvider, ThrottleInterval);
-
     public void Handle(LogMessage message)
     {
         var level = Map(message.Level);
-        if (TransportFacilities.Contains(message.Facility) && level is LogLevel.Warning or LogLevel.Error)
+        var isTransportFacility = TransportFacilities.Contains(message.Facility);
+        var isWarningOrError = level is LogLevel.Warning or LogLevel.Error;
+        if (isTransportFacility && isWarningOrError)
         {
-            if (!_throttle.TryPass(message.Facility, out var suppressed))
+            // Ключ общий для consumer и producer: один фасет - одна строка за окно на процесс.
+            if (!throttle.TryPass("native:" + message.Facility, out var suppressed))
             {
                 return;
             }
 
-            logger.Log(LogLevel.Warning, "librdkafka [{Facility}] {Message} (suppressed since last: {Suppressed}; repeats are not logged for 30 s)",
-                message.Facility, message.Message, suppressed);
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                logger.Log(LogLevel.Warning, "librdkafka [{Facility}] {Message} (suppressed since last: {Suppressed}; repeats are not logged for 30 s)",
+                    message.Facility, message.Message, suppressed);
+            }
+
             return;
         }
 

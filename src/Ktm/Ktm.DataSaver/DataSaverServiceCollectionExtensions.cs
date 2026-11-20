@@ -42,6 +42,8 @@ public static class DataSaverServiceCollectionExtensions
             kestrel.ListenAnyIP(health.Value.Port));
 
         services.AddSingleton(TimeProvider.System);
+        // Один троттлинг логов Kafka на процесс: consumer, producer и error-callback делят лимит на ключ.
+        services.AddSingleton(sp => new LogThrottle(sp.GetRequiredService<TimeProvider>(), LogThrottle.DefaultInterval));
         services.AddSingleton(sp => new DataSaverMetrics(sp.GetRequiredService<IMeterFactory>().Create(DataSaverMetrics.MeterName)));
 
         services.AddSingleton<IProcessTerminator>(sp => new HostProcessTerminator(
@@ -66,14 +68,16 @@ public static class DataSaverServiceCollectionExtensions
         services.AddSingleton<KafkaMessageSource>(sp => new KafkaMessageSource(
             sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
             sp.GetRequiredService<KafkaFatalErrorHandler>(),
-            sp.GetRequiredService<ILogger<KafkaMessageSource>>()));
+            sp.GetRequiredService<ILogger<KafkaMessageSource>>(),
+            sp.GetRequiredService<LogThrottle>()));
         services.AddSingleton<IMessageSource>(sp => new MeteredMessageSource(
             sp.GetRequiredService<KafkaMessageSource>(), sp.GetRequiredService<DataSaverMetrics>()));
         services.AddSingleton<IOffsetCommitter, KafkaOffsetCommitter>();
         services.AddSingleton<KafkaRejectionPublisher>(sp => new KafkaRejectionPublisher(
             sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
             sp.GetRequiredService<KafkaFatalErrorHandler>(),
-            sp.GetRequiredService<ILogger<KafkaRejectionPublisher>>()));
+            sp.GetRequiredService<ILogger<KafkaRejectionPublisher>>(),
+            sp.GetRequiredService<LogThrottle>()));
         services.AddSingleton<IRejectionPublisher>(sp => new ObservedRejectionPublisher(
             sp.GetRequiredService<KafkaRejectionPublisher>(),
             sp.GetRequiredService<DataSaverMetrics>(),

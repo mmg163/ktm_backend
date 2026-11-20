@@ -27,11 +27,11 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
     private readonly ILogger<KafkaRejectionPublisher> _logger;
     private int _disposed;
 
-    public KafkaRejectionPublisher(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaRejectionPublisher> logger, TimeProvider? timeProvider = null)
+    public KafkaRejectionPublisher(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaRejectionPublisher> logger, LogThrottle throttle)
     {
         _defaultTopic = options.RejectedTopic;
         _logger = logger;
-        var nativeLog = new KafkaNativeLogBridge(logger, timeProvider ?? TimeProvider.System);
+        var nativeLog = new KafkaNativeLogBridge(logger, throttle);
         var config = new ProducerConfig
         {
             EnableIdempotence = true,
