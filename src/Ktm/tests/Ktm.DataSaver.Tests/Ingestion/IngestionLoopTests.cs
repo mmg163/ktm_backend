@@ -80,6 +80,7 @@ public class IngestionLoopTests
         await h.RunAsync();
 
         Assert.Contains(h.Source.PauseCalls, call => call.Contains(P(7)));
+        Assert.Contains(P(7), h.Source.ResumeCalls.Single());
         Assert.Equal(["write", "pause", "pause", "write", "resume", "commit"], h.Log);
     }
 
@@ -196,8 +197,11 @@ public class IngestionLoopTests
     {
         var h = new Harness(batchSize: 10);
         h.Source.Enqueue(Valid(0, 0), Valid(1, 0), Valid(1, 1));
-        h.Source.OnDelivered = n => { if (n == 3) h.Source.ScheduleRevoke(P(1)); };
-        h.StopWhenQueueDrained();
+        h.Source.OnIdle = n =>
+        {
+            h.Source.ScheduleRevoke(P(1));
+            h.Stop.Cancel();
+        };
 
         await h.RunAsync();
 
@@ -226,11 +230,183 @@ public class IngestionLoopTests
     {
         var h = new Harness(batchSize: 10);
         h.Source.Enqueue(Valid(1, 0), Garbage(1, 1));
-        h.Source.OnDelivered = n => { if (n == 2) h.Source.ScheduleRevoke(P(1)); };
-        h.StopWhenQueueDrained();
+        h.Source.OnIdle = n =>
+        {
+            h.Source.ScheduleRevoke(P(1));
+            h.Stop.Cancel();
+        };
 
         await h.RunAsync();
 
         Assert.Empty(h.Log);
+    }
+
+    [Fact]
+    public async Task RevokeAndAssignOfSamePartitionInOneConsume_KeepsTheReturnedMessage()
+    {
+        var h = new Harness(batchSize: 10);
+        h.Source.Enqueue(Valid(1, 0), Valid(1, 5));
+        // Во время второго Consume: партиция отозвана и назначена снова, и пришло сообщение уже нового назначения.
+        h.Source.OnDelivered = n =>
+        {
+            if (n == 2)
+            {
+                h.Source.ScheduleRevoke(P(1));
+                h.Source.ScheduleAssign(P(1));
+            }
+        };
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        // Старое сообщение (до отзыва) выброшено, новое записано и закоммичено.
+        Assert.Equal(["e-1-5"], h.Store.Writes.Single());
+        Assert.Equal([Next(1, 6)], h.Committer.Commits.Single());
+    }
+
+    private sealed class ThrowOnceStage : IIngestionStage
+    {
+        private bool _thrown;
+
+        public IngestionVerdict Evaluate(Ktm.DataSaver.Core.Model.ConsumedMessage message, Ktm.DataSaver.Core.Model.ParsedEvent parsed)
+        {
+            if (_thrown)
+            {
+                return IngestionVerdict.Accept;
+            }
+
+            _thrown = true;
+            throw new TimeoutException("C5 is down");
+        }
+    }
+
+    [Fact]
+    public async Task PipelineStageException_IsBatchFailure_RetriedWithoutLossOrRejection()
+    {
+        var h = new Harness(3, new ThrowOnceStage());
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal(["pause", "write", "resume", "commit"], h.Log);
+        Assert.Equal(["e-0-0", "e-0-1", "e-0-2"], h.Store.Writes.Single());
+        Assert.Empty(h.Publisher.Published);
+    }
+
+    [Fact]
+    public async Task DeadLetterWithoutProgress_BacksOffInsteadOfSpinning()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Fail = call => call <= 2 ? new FakeDbException("23514") : null;
+        // C6 каждый раз «уводит» одно и то же сообщение: первый раз это прогресс, второй - нет.
+        h.Handler.Decide = ctx => WriteFailureDecision.DeadLetter([ctx.Batch[0]]);
+        var polledAtCall = new Dictionary<int, int>();
+        h.Store.OnCall = call => polledAtCall[call] = h.Source.ConsumeCalls;
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal(["write", "write", "pause", "write", "resume", "commit"], h.Log);
+        Assert.Equal(polledAtCall[2], polledAtCall[1]);
+        Assert.True(polledAtCall[3] > polledAtCall[2]);
+        Assert.Equal([Next(0, 3)], h.Committer.Commits.Single());
+    }
+
+    [Fact]
+    public async Task DeadLetterOfMessagesOutsideTheBatch_IsTreatedAsRetry()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Fail = call => call == 1 ? new FakeDbException("23514") : null;
+        h.Handler.Decide = _ => WriteFailureDecision.DeadLetter([Valid(9, 9)]);
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal(["write", "pause", "write", "resume", "commit"], h.Log);
+        Assert.Equal(3, h.Store.Writes[1].Length);
+    }
+
+    [Fact]
+    public async Task StopAlreadySignalled_RetriesImmediatelyOnce_ThenWaitsWithinDeadline()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Fail = call => call <= 2 ? new IOException("down") : null;
+        h.Store.OnCall = call => { if (call == 1) h.Stop.Cancel(); };
+
+        await h.RunWithClockPumpAsync();
+
+        Assert.Equal(3, h.Store.Writes.Count);
+        Assert.Single(h.Committer.Commits);
+    }
+
+    [Fact]
+    public async Task HungWriteInFlight_IsCancelledByDeadlineCountedFromStopSignal_WithoutCommit()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Hang = true;
+        h.Store.OnCall = _ => h.Stop.Cancel();
+
+        await h.RunWithClockPumpAsync();
+
+        Assert.Empty(h.Committer.Commits);
+    }
+
+    [Fact]
+    public async Task FailureHandlerCancelledByDeadline_DoesNotLeakOperationCanceledException()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Fail = _ => new FakeDbException("23514");
+        h.Store.OnCall = call => { if (call == 1) h.Stop.Cancel(); };
+        h.Handler.Hang = true;
+
+        await h.RunWithClockPumpAsync();
+
+        Assert.Empty(h.Committer.Commits);
+    }
+
+    [Fact]
+    public async Task CommitFailure_IsLoggedAndLoopContinuesWithNextBatch()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2), Valid(0, 3), Valid(0, 4), Valid(0, 5));
+        h.Committer.Fail = call => call == 1 ? new InvalidOperationException("partition lost") : null;
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal(2, h.Store.Writes.Count);
+        Assert.Equal([Next(0, 6)], h.Committer.Commits[1]);
+    }
+
+    [Fact]
+    public async Task SourceReturningNullImmediately_DoesNotMakeLoopSpin()
+    {
+        var h = new Harness();
+        h.Source.ReturnNullImmediately = true;
+
+        var run = h.RunAsync();
+        await Task.Delay(100);
+        var callsWhileIdle = h.Source.ConsumeCalls;
+        await h.Stop.CancelAsync();
+        await run;
+
+        // Время в тесте не идёт: без защиты цикл накрутил бы тысячи опросов.
+        Assert.True(callsWhileIdle <= 2, $"loop spun: {callsWhileIdle} Consume calls");
+    }
+
+    [Fact]
+    public async Task RunAsync_CannotBeStartedTwice()
+    {
+        var h = new Harness();
+        h.StopWhenQueueDrained();
+        await h.RunAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => h.Loop.RunAsync(CancellationToken.None));
     }
 }

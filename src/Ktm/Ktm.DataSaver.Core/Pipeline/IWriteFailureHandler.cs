@@ -34,7 +34,12 @@ public sealed record WriteFailureDecision
 /// <summary>Контекст ошибки записи класса «данные»: пачка, ошибка, номер попытки (с 1).</summary>
 public sealed record WriteFailureContext(IReadOnlyList<ConsumedMessage> Batch, Exception Error, int Attempt);
 
-/// <summary>Порт C6 (обработка ошибок записи). Вызывается только для класса «данные» (ADR-0002, D-7).</summary>
+/// <summary>
+/// Порт C6 (обработка ошибок записи). Вызывается только для класса «данные» (ADR-0002, D-7).
+/// Решение <see cref="WriteFailureDecision.DeadLetter"/> реализация возвращает ТОЛЬКО после durable-сохранения
+/// этих сообщений: после него цикл исключает их из записи и коммитит их offset, то есть Kafka их больше не отдаст.
+/// Сообщения должны принадлежать переданной пачке, а набор - расти от вызова к вызову, иначе цикл трактует решение как Retry.
+/// </summary>
 public interface IWriteFailureHandler
 {
     ValueTask<WriteFailureDecision> HandleAsync(WriteFailureContext context, CancellationToken cancellationToken);

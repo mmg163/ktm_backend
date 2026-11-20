@@ -28,6 +28,11 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
 
     public List<IReadOnlyCollection<TopicPartitionKey>> PauseCalls { get; } = [];
 
+    public List<IReadOnlyCollection<TopicPartitionKey>> ResumeCalls { get; } = [];
+
+    /// <summary>Адаптер, нарушающий контракт: пустой опрос возвращается сразу, без ожидания таймаута.</summary>
+    public bool ReturnNullImmediately { get; set; }
+
     public int ConsumeCalls { get; private set; }
 
     public int IdleCalls { get; private set; }
@@ -42,9 +47,20 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
 
     public void Enqueue(params ConsumedMessage[] messages) => _queue.AddRange(messages);
 
-    public void ScheduleRevoke(TopicPartitionKey partition) => _revoked.Add(partition);
+    public void ScheduleRevoke(TopicPartitionKey partition)
+    {
+        _revoked.Add(partition);
+        CurrentAssignment.Remove(partition);
+    }
 
-    public void ScheduleAssign(TopicPartitionKey partition) => _assigned.Add(partition);
+    public void ScheduleAssign(TopicPartitionKey partition)
+    {
+        _assigned.Add(partition);
+        if (!CurrentAssignment.Contains(partition))
+        {
+            CurrentAssignment.Add(partition);
+        }
+    }
 
     public ValueTask<ConsumedMessage?> ConsumeAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
@@ -60,7 +76,11 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
         }
 
         IdleCalls++;
-        time.Advance(timeout);
+        if (!ReturnNullImmediately)
+        {
+            time.Advance(timeout);
+        }
+
         OnIdle?.Invoke(IdleCalls);
         return ValueTask.FromResult<ConsumedMessage?>(null);
     }
@@ -88,6 +108,7 @@ internal sealed class FakeSource(FakeTimeProvider time, List<string> log) : IMes
     public void Resume(IReadOnlyCollection<TopicPartitionKey> partitions)
     {
         log.Add("resume");
+        ResumeCalls.Add(partitions.ToArray());
         _paused.ExceptWith(partitions);
     }
 }
@@ -101,18 +122,24 @@ internal sealed class FakeStore(List<string> log) : IEventStore
 
     public Action<int>? OnCall { get; set; }
 
-    public ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken)
+    /// <summary>Запись «зависает» до отмены токена (замена зависшего соединения с БД).</summary>
+    public bool Hang { get; set; }
+
+    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken)
     {
         log.Add("write");
         Writes.Add(events.Select(e => e.SourceEventId).ToArray());
         OnCall?.Invoke(Writes.Count);
         cancellationToken.ThrowIfCancellationRequested();
+        if (Hang)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
         if (Fail(Writes.Count) is { } error)
         {
             throw error;
         }
-
-        return ValueTask.CompletedTask;
     }
 }
 
@@ -141,11 +168,13 @@ internal sealed class FakeCommitter(List<string> log) : IOffsetCommitter
 {
     public List<IReadOnlyList<PartitionOffset>> Commits { get; } = [];
 
+    public Func<int, Exception?> Fail { get; set; } = _ => null;
+
     public ValueTask CommitAsync(IReadOnlyList<PartitionOffset> offsets, CancellationToken cancellationToken)
     {
         log.Add("commit");
         Commits.Add(offsets);
-        return ValueTask.CompletedTask;
+        return Fail(Commits.Count) is { } error ? throw error : ValueTask.CompletedTask;
     }
 }
 
@@ -153,8 +182,17 @@ internal sealed class FakeFailureHandler : IWriteFailureHandler
 {
     public Func<WriteFailureContext, WriteFailureDecision> Decide { get; set; } = _ => WriteFailureDecision.Retry;
 
-    public ValueTask<WriteFailureDecision> HandleAsync(WriteFailureContext context, CancellationToken cancellationToken) =>
-        ValueTask.FromResult(Decide(context));
+    public bool Hang { get; set; }
+
+    public async ValueTask<WriteFailureDecision> HandleAsync(WriteFailureContext context, CancellationToken cancellationToken)
+    {
+        if (Hang)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
+        return Decide(context);
+    }
 }
 
 /// <summary>Цикл на fake-портах: размер пачки 3 по умолчанию, ожидание закрытия по времени - час (пачку закрывает размер или остановка).</summary>
@@ -171,7 +209,7 @@ internal sealed class Harness
     public readonly CountingAdminNotifier Notifier = new();
     public readonly IngestionLoop Loop;
 
-    public Harness(int batchSize = 3)
+    public Harness(int batchSize = 3, params IIngestionStage[] stages)
     {
         Source = new FakeSource(Time, Log);
         Store = new FakeStore(Log);
@@ -179,7 +217,7 @@ internal sealed class Harness
         Committer = new FakeCommitter(Log);
         Loop = new IngestionLoop(
             Source,
-            new IngestionPipeline(new FormatStage(new EventDecoder()), []),
+            new IngestionPipeline(new FormatStage(new EventDecoder()), stages),
             Store,
             Publisher,
             Committer,
