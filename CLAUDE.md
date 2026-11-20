@@ -52,5 +52,10 @@ Workflow OpenSpec (`/opsx:*`, скиллы `$openspec-*`) не отменяет 
 ## Навыки (skills)
 Скиллы проекта лежат в `.claude/skills/` и вызываются через `$имя`:
 - `$codereview` - для ревью;
+- `$code-testing` - написание и усиление тестов (xUnit) - `developer`;
+- `$run-tests` - корректная команда запуска `dotnet test` и фильтры - `developer`;
+- `$dotnet-webapi` - эндпоинты ASP.NET Core, HTTP-семантика, OpenAPI, обработка ошибок - `developer`;
+  `reviewer` и `teamlead` сверяются с ним при проверке и проектировании контрактов API;
+- `$optimizing-ef-core-queries` - запросы и доступ к данным через EF Core - `developer`, `reviewer`;
 - `$openspec-explore`, `$openspec-propose`, `$openspec-apply-change`, `$openspec-update-change`,
   `$openspec-sync-specs`, `$openspec-archive-change` - workflow OpenSpec.
