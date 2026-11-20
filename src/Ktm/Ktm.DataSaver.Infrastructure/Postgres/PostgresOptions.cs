@@ -4,22 +4,29 @@ namespace Ktm.DataSaver.Infrastructure.Postgres;
 
 /// <summary>
 /// Настройки подключения к БД журнала (секция <c>DataSaver:Postgres</c>, окружение <c>DataSaver__Postgres__*</c>).
-/// Пароль - переменная <see cref="Password"/> либо файл <see cref="PasswordFile"/> (секрет Docker/Kubernetes); не оба сразу.
-/// Пароль не попадает в <see cref="ToString"/> и в сообщения исключений.
+/// Host, Database, Username и пароль обязательны (ADR-0002 D-11: без значений по умолчанию). Пароль - переменная
+/// <see cref="Password"/> либо файл <see cref="PasswordFile"/>, ровно один из двух. Пароль не попадает в
+/// <see cref="ToString"/> и в сообщения исключений.
 /// </summary>
 public sealed class PostgresOptions
 {
-    public string Host { get; set; } = "localhost";
+    /// <summary>Допустимые значения <see cref="SslMode"/>.</summary>
+    public static readonly IReadOnlyList<string> AllowedSslModes = ["Disable", "Prefer", "Require", "VerifyCA", "VerifyFull"];
+
+    public string Host { get; set; } = string.Empty;
 
     public int Port { get; set; } = 5432;
 
-    public string Database { get; set; } = "ktm_revisor";
+    public string Database { get; set; } = string.Empty;
 
-    public string Username { get; set; } = "ktm_app";
+    public string Username { get; set; } = string.Empty;
 
     public string? Password { get; set; }
 
     public string? PasswordFile { get; set; }
+
+    /// <summary>Шифрование канала (docs/07 п. 7.3): по умолчанию Require; Disable - только для тестов и локальной разработки.</summary>
+    public string SslMode { get; set; } = "Require";
 
     public int CommandTimeoutSeconds { get; set; } = 30;
 
@@ -54,6 +61,7 @@ public sealed class PostgresOptions
             Database = Database,
             Username = Username,
             Password = ResolvePassword(),
+            SslMode = ParseSslMode(),
             CommandTimeout = CommandTimeoutSeconds,
             Timeout = ConnectTimeoutSeconds,
             MinPoolSize = MinPoolSize,
@@ -67,9 +75,21 @@ public sealed class PostgresOptions
     public NpgsqlDataSource BuildDataSource() => NpgsqlDataSource.Create(BuildConnectionString());
 
     public override string ToString() =>
-        $"Postgres {Username}@{Host}:{Port}/{Database} (CommandTimeout={CommandTimeoutSeconds}s, Pool={MinPoolSize}..{MaxPoolSize}, KeepAlive={KeepAliveSeconds}s, Password=***)";
+        $"Postgres {Username}@{Host}:{Port}/{Database} (SslMode={SslMode}, CommandTimeout={CommandTimeoutSeconds}s, Pool={MinPoolSize}..{MaxPoolSize}, KeepAlive={KeepAliveSeconds}s, Password=***)";
 
-    private string? ResolvePassword()
+    private Npgsql.SslMode ParseSslMode()
+    {
+        var match = AllowedSslModes.FirstOrDefault(m => string.Equals(m, SslMode, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+        {
+            throw new InvalidOperationException(
+                $"Postgres:SslMode '{SslMode}' is not supported. Allowed values: {string.Join(", ", AllowedSslModes)}.");
+        }
+
+        return Enum.Parse<Npgsql.SslMode>(match);
+    }
+
+    private string ResolvePassword()
     {
         var hasPassword = !string.IsNullOrEmpty(Password);
         var hasFile = !string.IsNullOrWhiteSpace(PasswordFile);
@@ -78,17 +98,30 @@ public sealed class PostgresOptions
             throw new InvalidOperationException("Postgres:Password and Postgres:PasswordFile are mutually exclusive.");
         }
 
-        if (!hasFile) return Password;
+        if (!hasPassword && !hasFile)
+        {
+            throw new InvalidOperationException("Postgres:Password or Postgres:PasswordFile is required.");
+        }
 
+        if (hasPassword) return Password!;
+
+        string password;
         try
         {
             // Завершающий перевод строки в файле секрета не часть пароля.
-            return File.ReadAllText(PasswordFile!).TrimEnd('\r', '\n');
+            password = File.ReadAllText(PasswordFile!).TrimEnd('\r', '\n');
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Сообщение содержит только путь к файлу, не его содержимое.
             throw new InvalidOperationException($"Postgres:PasswordFile '{PasswordFile}' cannot be read: {ex.GetType().Name}.");
         }
+
+        if (password.Length == 0)
+        {
+            throw new InvalidOperationException($"Postgres:PasswordFile '{PasswordFile}' is empty.");
+        }
+
+        return password;
     }
 }

@@ -35,6 +35,18 @@ public class EventDecoderTests
     }
 
     [Fact]
+    public void Decode_Body_IsWholeMessageIncludingCorrectionAndUnknownFields()
+    {
+        var json = EventSamples.SkudCorrection.Replace("\"eventType\"", "\"futureField\":{\"x\":[1,2]},\"eventType\"");
+
+        var parsed = _decoder.Decode(EventSamples.Bytes(json)).Event!;
+
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(json), JsonNode.Parse(parsed.Body.GetRawText())));
+        Assert.Equal("Исправлен владелец карты", parsed.Body.GetProperty("correction").GetProperty("reason").GetString());
+        Assert.Equal(2, parsed.Body.GetProperty("futureField").GetProperty("x")[1].GetInt32());
+    }
+
+    [Fact]
     public void Decode_OneCDoWithNullDevice_HasNoDeviceId()
     {
         var parsed = _decoder.Decode(EventSamples.Bytes(EventSamples.OneCDo)).Event!;

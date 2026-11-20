@@ -22,21 +22,24 @@ public sealed class PostgresStoreException : Exception, ISqlStateError
 
     public string? ConstraintName { get; }
 
-    /// <summary>Оборачивает ошибки драйвера; прочие (в том числе отмену) возвращает как есть.</summary>
+    /// <summary>
+    /// Оборачивает ошибки драйвера; прочие (в том числе отмену) возвращает как есть. <see cref="PostgresException"/>
+    /// ищется по всей цепочке InnerException (например, ошибка аутентификации 28P01 внутри <see cref="NpgsqlException"/>).
+    /// </summary>
     public static Exception Adapt(Exception exception)
     {
-        switch (exception)
+        for (var current = exception; current is not null; current = current.InnerException)
         {
-            case PostgresException pg:
-                return new PostgresStoreException(
-                    $"PostgreSQL error SQLSTATE {pg.SqlState}" +
-                    (pg.TableName is null ? "" : $" on {pg.TableName}") +
-                    (pg.ConstraintName is null ? "" : $" (constraint {pg.ConstraintName})"),
-                    pg.SqlState, pg.ConstraintName, inner: null);
-            case NpgsqlException npg:
-                return new PostgresStoreException($"Npgsql error: {npg.GetType().Name}", sqlState: null, constraintName: null, npg);
-            default:
-                return exception;
+            if (current is not PostgresException pg) continue;
+            return new PostgresStoreException(
+                $"PostgreSQL error SQLSTATE {pg.SqlState}" +
+                (pg.TableName is null ? "" : $" on {pg.TableName}") +
+                (pg.ConstraintName is null ? "" : $" (constraint {pg.ConstraintName})"),
+                pg.SqlState, pg.ConstraintName, inner: null);
         }
+
+        return exception is NpgsqlException npg
+            ? new PostgresStoreException($"Npgsql error: {npg.GetType().Name}", sqlState: null, constraintName: null, npg)
+            : exception;
     }
 }

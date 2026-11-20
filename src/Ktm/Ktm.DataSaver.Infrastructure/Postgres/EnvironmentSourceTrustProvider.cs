@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Globalization;
 using Ktm.DataSaver.Core.Ingestion;
 
@@ -5,7 +6,8 @@ namespace Ktm.DataSaver.Infrastructure.Postgres;
 
 /// <summary>
 /// Временный источник коэффициентов доверия (ADR-0002, G-3): <c>DataSaver__Trust__Default</c> (по умолчанию 100) и
-/// переопределения <c>DataSaver__Trust__Source__&lt;source&gt;</c>. Заменяется хранилищем настроек.
+/// переопределения <c>DataSaver__Trust__Source__&lt;source&gt;</c>. Все значения проверяются в конструкторе (отказ запуска);
+/// <see cref="GetTrust"/> при записи не бросает. Заменяется хранилищем настроек.
 /// </summary>
 public sealed class EnvironmentSourceTrustProvider : ISourceTrustProvider
 {
@@ -13,20 +15,37 @@ public sealed class EnvironmentSourceTrustProvider : ISourceTrustProvider
     public const string SourcePrefix = "DataSaver__Trust__Source__";
     public const short DefaultTrust = 100;
 
-    private readonly Func<string, string?> _getVariable;
     private readonly short _default;
+    private readonly Dictionary<string, short> _bySource = new(StringComparer.Ordinal);
 
-    public EnvironmentSourceTrustProvider(Func<string, string?>? getVariable = null)
+    /// <summary>Читает переменные окружения процесса.</summary>
+    public static EnvironmentSourceTrustProvider FromEnvironment()
     {
-        _getVariable = getVariable ?? Environment.GetEnvironmentVariable;
-        _default = Parse(DefaultVariable, _getVariable(DefaultVariable)) ?? DefaultTrust;
+        var variables = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            variables[(string)entry.Key] = entry.Value as string;
+        }
+
+        return new EnvironmentSourceTrustProvider(variables);
+    }
+
+    public EnvironmentSourceTrustProvider(IReadOnlyDictionary<string, string?> variables)
+    {
+        ArgumentNullException.ThrowIfNull(variables);
+        _default = variables.TryGetValue(DefaultVariable, out var raw) ? Parse(DefaultVariable, raw) ?? DefaultTrust : DefaultTrust;
+
+        foreach (var (name, value) in variables)
+        {
+            if (!name.StartsWith(SourcePrefix, StringComparison.Ordinal) || name.Length == SourcePrefix.Length) continue;
+            if (Parse(name, value) is { } trust) _bySource[name[SourcePrefix.Length..]] = trust;
+        }
     }
 
     public short GetTrust(string source)
     {
         ArgumentException.ThrowIfNullOrEmpty(source);
-        var name = SourcePrefix + source;
-        return Parse(name, _getVariable(name)) ?? _default;
+        return _bySource.TryGetValue(source, out var trust) ? trust : _default;
     }
 
     private static short? Parse(string name, string? value)

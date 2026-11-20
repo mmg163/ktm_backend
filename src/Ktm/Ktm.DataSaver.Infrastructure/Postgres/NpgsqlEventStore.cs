@@ -24,6 +24,7 @@ public sealed class NpgsqlEventStore : IEventStore
                     @external_person_id, @trust, @payload, @schema_version)
              AS t(event_id, source, source_event_id, occurred_at, event_type, device_id,
                   external_person_id, trust, payload, schema_version)
+        ORDER BY t.source, t.source_event_id, t.occurred_at
         ON CONFLICT (source, source_event_id, occurred_at) DO NOTHING
         """;
 
@@ -42,6 +43,7 @@ public sealed class NpgsqlEventStore : IEventStore
                          AND e.occurred_at = c.correction_occurred_at
         LEFT JOIN ktm.events o ON o.source = c.source AND o.source_event_id = c.original_source_event_id
                               AND o.occurred_at = c.original_occurred_at
+        ORDER BY c.source, c.correction_source_event_id, c.correction_occurred_at
         ON CONFLICT (source, correction_source_event_id, correction_occurred_at) DO NOTHING
         """;
 
@@ -92,7 +94,7 @@ public sealed class NpgsqlEventStore : IEventStore
             await transaction.CommitAsync(cancellationToken);
             return new EventWriteResult(insertEvents.RecordsAffected, insertCorrections?.RecordsAffected ?? 0);
         }
-        catch (NpgsqlException ex)
+        catch (NpgsqlException ex) when (!cancellationToken.IsCancellationRequested)
         {
             throw PostgresStoreException.Adapt(ex);
         }
@@ -130,7 +132,7 @@ public sealed class NpgsqlEventStore : IEventStore
             }
 
             trusts[i] = trust;
-            payloads[i] = e.Payload.GetRawText();
+            payloads[i] = e.Body.GetRawText();
             versions[i] = checked((short)e.SchemaVersion);
         }
 

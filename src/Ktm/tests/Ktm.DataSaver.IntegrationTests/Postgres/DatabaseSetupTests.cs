@@ -6,17 +6,59 @@ namespace Ktm.DataSaver.IntegrationTests.Postgres;
 [Collection(PostgresCollection.Name)]
 public sealed class DatabaseSetupTests(PostgresFixture db)
 {
-    [Fact]
-    public async Task Scripts_are_idempotent_and_keep_privileges()
+    private const string SchemaSnapshotSql = """
+        SELECT line FROM (
+            SELECT 'column ' || table_name || '.' || column_name || ' ' || data_type || ' null=' || is_nullable
+                   || ' default=' || coalesce(column_default, '') AS line
+            FROM information_schema.columns WHERE table_schema = 'ktm'
+            UNION ALL
+            SELECT 'constraint ' || conrelid::regclass || ' ' || conname || ' ' || pg_get_constraintdef(oid)
+            FROM pg_constraint WHERE connamespace = 'ktm'::regnamespace
+            UNION ALL
+            SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'ktm'
+            UNION ALL
+            SELECT 'trigger ' || pg_get_triggerdef(oid) FROM pg_trigger
+            WHERE NOT tgisinternal AND tgrelid::regclass::text IN ('ktm.events', 'ktm.event_corrections')
+            UNION ALL
+            SELECT 'grant ' || grantee || ' ' || table_name || ' ' || privilege_type
+            FROM information_schema.role_table_grants WHERE table_schema = 'ktm'
+            UNION ALL
+            SELECT 'owner ' || tablename || ' ' || tableowner FROM pg_tables WHERE schemaname = 'ktm'
+            UNION ALL
+            SELECT 'hypertable ' || hypertable_name || ' compression=' || compression_enabled || ' dims=' || num_dimensions
+            FROM timescaledb_information.hypertables WHERE hypertable_schema = 'ktm'
+            UNION ALL
+            SELECT 'job ' || proc_name || ' ' || coalesce(config::text, '') || ' ' || schedule_interval
+            FROM timescaledb_information.jobs WHERE hypertable_schema = 'ktm'
+            UNION ALL
+            SELECT 'role ' || rolname FROM pg_roles WHERE rolname IN ('ktm_app', 'ktm_migrator')
+        ) s ORDER BY line
+        """;
+
+    private async Task<List<string>> SnapshotSchemaAsync()
     {
+        await using var connection = new NpgsqlConnection(db.AdminConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(SchemaSnapshotSql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        var lines = new List<string>();
+        while (await reader.ReadAsync()) lines.Add(reader.GetString(0));
+        return lines;
+    }
+
+    [Fact]
+    public async Task Reapplying_scripts_leaves_schema_objects_constraints_triggers_and_grants_unchanged()
+    {
+        var before = await SnapshotSchemaAsync();
+
         await db.ApplyInitAsync();
         await db.ApplyMigrationsAsync();
 
-        await using var connection = await db.AppDataSource.OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(
-            "SELECT count(*) FROM timescaledb_information.hypertables WHERE hypertable_schema = 'ktm' AND hypertable_name = 'events'",
-            connection);
-        Assert.Equal(1L, await command.ExecuteScalarAsync());
+        var after = await SnapshotSchemaAsync();
+        Assert.Contains(before, l => l.StartsWith("trigger ") && l.Contains("trg_events_immutable"));
+        Assert.Contains(before, l => l == "grant ktm_app events INSERT");
+        Assert.Contains(before, l => l.StartsWith("job policy_compression"));
+        Assert.Equal(before, after);
     }
 
     [Fact]

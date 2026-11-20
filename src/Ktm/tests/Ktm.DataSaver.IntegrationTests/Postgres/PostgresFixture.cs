@@ -52,7 +52,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     public Task ApplyMigrationsAsync() => ApplyFilesAsync("db/migrations", MigratorConnectionString);
 
     private string ConnectionFor(string user, string password) =>
-        new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Username = user, Password = password }.ConnectionString;
+        new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Username = user, Password = password, SslMode = SslMode.Disable }.ConnectionString;
 
     private async Task SetRolePasswordAsync(string role, string password)
     {

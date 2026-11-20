@@ -1,6 +1,6 @@
 using Xunit.Abstractions;
 using System.Diagnostics;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Resilience;
 using Ktm.DataSaver.Infrastructure.Postgres;
@@ -96,9 +96,12 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
             Assert.Equal(expected.DeviceId, row.DeviceId);
             Assert.Equal(expected.ExternalPersonId, row.ExternalPersonId);
             Assert.Equal(expected.Source == scud ? (short)90 : (short)60, row.Trust);
-            using var stored = JsonDocument.Parse(row.Payload);
-            Assert.Equal(expected.Payload.GetProperty("n").GetInt32(), stored.RootElement.GetProperty("n").GetInt32());
-            Assert.Equal("тест", stored.RootElement.GetProperty("text").GetString());
+            // В events.payload - всё тело сообщения (конверт, неизвестные поля), сравнение jsonb-эквивалентности.
+            Assert.True(JsonNode.DeepEquals(JsonNode.Parse(expected.Body.GetRawText()), JsonNode.Parse(row.Payload)));
+            Assert.Equal(expected.Payload.GetProperty("n").GetInt32(),
+                JsonNode.Parse(row.Payload)!["payload"]!["n"]!.GetValue<int>());
+            // UUIDv7: 48 бит времени в миллисекундах совпадают с received_at.
+            Assert.Equal(row.ReceivedAt.ToUnixTimeMilliseconds(), UuidV7Milliseconds(row.EventId));
         }
 
         Assert.All(oneCRows, r => Assert.Null(r.DeviceId));
@@ -251,9 +254,83 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
     }
 
     [Fact]
+    public async Task Correction_body_keeps_correction_block_and_unknown_fields()
+    {
+        var source = NewSource();
+        var correction = Correction(source, "fix", At(100), "orig", At(0));
+
+        await Store().WriteBatchAsync([correction], CancellationToken.None);
+
+        var stored = JsonNode.Parse((await ReadEventsAsync(source)).Single().Payload)!;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(correction.Body.GetRawText()), stored));
+        Assert.Equal("orig", stored["correction"]!["correctsSourceEventId"]!.GetValue<string>());
+        Assert.Equal(2, stored["futureField"]!["x"]![1]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Cancelled_write_surfaces_cancellation_not_a_database_error()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => Store().WriteBatchAsync([Event(NewSource(), "a", At(0))], cts.Token));
+    }
+
+    [Fact]
+    public async Task Duplicate_and_new_events_are_handled_when_the_chunk_is_already_compressed()
+    {
+        var source = NewSource();
+        var day = new DateTimeOffset(2025, 1, 6, 10, 0, 0, TimeSpan.Zero);
+        var store = Store();
+        await store.WriteBatchAsync([Event(source, "old", day)], CancellationToken.None);
+
+        await using (var migrator = new NpgsqlConnection(db.MigratorConnectionString))
+        {
+            await migrator.OpenAsync();
+            await using var compress = new NpgsqlCommand(
+                "SELECT count(compress_chunk(c, if_not_compressed => true)) FROM show_chunks('ktm.events', older_than => '2025-02-01Z'::timestamptz, newer_than => '2025-01-01Z'::timestamptz) c",
+                migrator);
+            Assert.True((long)(await compress.ExecuteScalarAsync())! >= 1);
+            await using var check = new NpgsqlCommand(
+                "SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_schema = 'ktm' AND hypertable_name = 'events' AND is_compressed AND range_start < '2025-01-06Z' AND range_end > '2025-01-06Z'",
+                migrator);
+            Assert.Equal(1L, await check.ExecuteScalarAsync());
+        }
+
+        var result = await store.WriteBatchAsync(
+            [Event(source, "old", day), Event(source, "new", day.AddMinutes(1))], CancellationToken.None);
+
+        Assert.Equal(new EventWriteResult(1, 0), result);
+        Assert.Equal(2, (await ReadEventsAsync(source)).Count);
+    }
+
+    [Fact]
+    public void Authentication_error_nested_in_npgsql_exception_is_fatal_config()
+    {
+        var inner = new PostgresException("password authentication failed", "FATAL", "FATAL", "28P01");
+        var adapted = PostgresStoreException.Adapt(new NpgsqlException("connect failed", inner));
+
+        Assert.Equal("28P01", ((ISqlStateError)adapted).SqlState);
+        Assert.Equal(WriteErrorClass.FatalConfig, WriteErrorClassifier.Classify(adapted));
+    }
+
+    private static long UuidV7Milliseconds(Guid id)
+    {
+        var bytes = id.ToByteArray(bigEndian: true);
+        long ms = 0;
+        for (var i = 0; i < 6; i++) ms = (ms << 8) | bytes[i];
+        return ms;
+    }
+
+    [Fact]
     public async Task Unreachable_database_is_classified_as_transient()
     {
-        var options = new PostgresOptions { Port = 1, Password = "x", ConnectTimeoutSeconds = 2, MinPoolSize = 0 };
+        var options = new PostgresOptions
+        {
+            Host = "127.0.0.1", Database = "d", Username = "u", SslMode = "Disable",
+            Port = 1, Password = "x", ConnectTimeoutSeconds = 2, MinPoolSize = 0,
+        };
         await using var dataSource = options.BuildDataSource();
         var store = new NpgsqlEventStore(dataSource, new FixedTrustProvider(100));
 
