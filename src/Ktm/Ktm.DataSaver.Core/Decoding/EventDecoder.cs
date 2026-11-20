@@ -136,7 +136,8 @@ public sealed partial class EventDecoder
             deviceId,
             root.GetProperty("externalPersonId").GetString()!,
             root.GetProperty("payload").Clone(),
-            correction));
+            correction,
+            root.Clone()));
     }
 
     /// <summary>Версия - целое число JSON; всё остальное (нет поля, строка, дробь) - неизвестная версия.</summary>
