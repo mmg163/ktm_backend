@@ -33,4 +33,16 @@ public sealed class KafkaConfigParsingTests
         Assert.Contains("Kafka__SaslMechanism", mechanism.Message);
         Assert.Contains("SCRAM-SHA-256", mechanism.Message);
     }
+
+    [Theory]
+    [InlineData("replica-1", "replica-1")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    public void Group_instance_id_is_passed_to_consumer_only_when_set(string? configured, string? expected)
+    {
+        var config = KafkaMessageSource.BuildConfig(new KafkaOptions { BootstrapServers = "kafka:9092", GroupInstanceId = configured });
+
+        Assert.Equal(expected, config.GroupInstanceId);
+    }
 }

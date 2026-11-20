@@ -11,9 +11,9 @@ using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using System.Diagnostics.Metrics;
 
 namespace Ktm.DataSaver;
 
@@ -31,6 +31,7 @@ public static class DataSaverServiceCollectionExtensions
         AddOptions<BackoffOptions>(services, root.GetSection("Backoff"), DataSaverChecks.Backoff);
         AddOptions<ShutdownOptions>(services, root.GetSection("Shutdown"), DataSaverChecks.Shutdown);
         AddOptions<HealthOptions>(services, root.GetSection("Health"), DataSaverChecks.Health);
+        services.AddSingleton<IValidateOptions<HealthOptions>, LiveStaleConsistencyValidator>();
         AddOptions<TrustOptions>(services, root.GetSection("Trust"), DataSaverChecks.Trust);
         AddOptions<DataSaverOptions>(services, root, DataSaverChecks.Root);
 

@@ -2,8 +2,12 @@ using Ktm.DataSaver.Core.Model;
 
 namespace Ktm.DataSaver.Core.Pipeline;
 
-/// <summary>Итог обработки одного сообщения: <c>Event</c> заполнен только при <c>Verdict.IsAccepted</c>.</summary>
-public sealed record PipelineResult(ConsumedMessage Message, ParsedEvent? Event, IngestionVerdict Verdict);
+/// <summary>
+/// Итог обработки одного сообщения: <c>Event</c> заполнен только при <c>Verdict.IsAccepted</c>.
+/// <c>Origin</c> - происхождение отбракованного стадией (после разбора формата) события, для лога; null для принятых
+/// и для сообщений, не прошедших разбор формата.
+/// </summary>
+public sealed record PipelineResult(ConsumedMessage Message, ParsedEvent? Event, IngestionVerdict Verdict, EventOrigin? Origin = null);
 
 /// <summary>
 /// Формат (встроенная стадия), затем стадии <see cref="IIngestionStage"/> строго в порядке регистрации;
@@ -26,7 +30,7 @@ public sealed class IngestionPipeline(FormatStage formatStage, IEnumerable<IInge
             var verdict = stage.Evaluate(message, parsed);
             if (!verdict.IsAccepted)
             {
-                return new PipelineResult(message, null, verdict);
+                return new PipelineResult(message, null, verdict, new EventOrigin(parsed.Source, parsed.SourceEventId));
             }
         }
 

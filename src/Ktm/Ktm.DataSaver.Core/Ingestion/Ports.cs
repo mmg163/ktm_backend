@@ -50,8 +50,8 @@ public interface IEventStore
     ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken);
 }
 
-/// <summary>Отбракованное сообщение с причиной.</summary>
-public sealed record RejectedMessage(ConsumedMessage Message, RejectionInfo Info);
+/// <summary>Отбракованное сообщение с причиной; <c>Origin</c> - null, если формат сообщения не разобран.</summary>
+public sealed record RejectedMessage(ConsumedMessage Message, RejectionInfo Info, EventOrigin? Origin = null);
 
 /// <summary>Итог публикации отбракованных: отказ Kafka - результат, а не исключение (4.4).</summary>
 public sealed record RejectionPublishResult

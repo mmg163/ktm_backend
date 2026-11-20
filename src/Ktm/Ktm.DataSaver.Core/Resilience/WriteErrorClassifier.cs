@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Net.Sockets;
 
 namespace Ktm.DataSaver.Core.Resilience;
@@ -33,6 +34,32 @@ public static class WriteErrorClassifier
 
         // Неизвестная ошибка: ничего не теряем, повторяем.
         return WriteErrorClass.Transient;
+    }
+
+    /// <summary>
+    /// SQLSTATE первой найденной в цепочке исключения ошибки БД: <see cref="ISqlStateError"/> либо
+    /// <see cref="DbException"/> (драйвер Core не знает). Для лога вместо текста исключения.
+    /// </summary>
+    public static string? FindSqlState(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            var state = current switch
+            {
+                ISqlStateError e => e.SqlState,
+                DbException e => e.SqlState,
+                AggregateException a => a.InnerExceptions.Select(FindSqlState).FirstOrDefault(x => !string.IsNullOrEmpty(x)),
+                _ => null,
+            };
+            if (!string.IsNullOrEmpty(state))
+            {
+                return state;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

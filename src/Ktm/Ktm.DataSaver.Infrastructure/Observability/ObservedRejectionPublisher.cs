@@ -5,7 +5,7 @@ namespace Ktm.DataSaver.Infrastructure.Observability;
 
 /// <summary>
 /// Декоратор публикации отбракованных (6.5): после подтверждения брокера пишет Error-лог с координатами сообщения
-/// (топик, партиция, offset, причина) и считает отбраковку по причинам. Тело сообщения в лог не попадает.
+/// (именованные Topic, Partition, Offset, Source, SourceEventId, причина) и считает отбраковку по причинам. Тело сообщения в лог не попадает.
 /// Неудачная публикация считается повтором.
 /// </summary>
 public sealed class ObservedRejectionPublisher(IRejectionPublisher inner, DataSaverMetrics metrics, ILogger<ObservedRejectionPublisher> logger) : IRejectionPublisher
@@ -22,9 +22,11 @@ public sealed class ObservedRejectionPublisher(IRejectionPublisher inner, DataSa
         foreach (var item in rejected)
         {
             metrics.MessageRejected(item.Info.Reason);
+            // Source и SourceEventId - из конверта разобранного события; для неразобранного сообщения null, тело не логируется.
             logger.LogError(
-                "Message rejected: topic={Topic} partition={Partition} offset={Offset} kind={Kind} reason={Reason} ruleId={RuleId}",
-                item.Message.Topic, item.Message.Partition, item.Message.Offset, item.Info.Kind, item.Info.Reason, item.Info.RuleId);
+                "Message rejected: {Topic} {Partition} {Offset} {Source} {SourceEventId} {Kind} {Reason} {RuleId}",
+                item.Message.Topic, item.Message.Partition, item.Message.Offset, item.Origin?.Source, item.Origin?.SourceEventId,
+                item.Info.Kind, item.Info.Reason, item.Info.RuleId);
         }
 
         return result;

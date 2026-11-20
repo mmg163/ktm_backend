@@ -25,6 +25,9 @@ public class HostBehaviorTests
         public bool IsConsumerFatal { get; set; }
         public bool HasAssignment { get; set; } = true;
         public bool DatabaseUp { get; set; } = true;
+        public bool BrokerUp { get; set; } = true;
+
+        public ValueTask<bool> IsBrokerAvailableAsync(CancellationToken cancellationToken) => ValueTask.FromResult(BrokerUp);
 
         public ValueTask<bool> IsDatabaseAvailableAsync(CancellationToken cancellationToken) => ValueTask.FromResult(DatabaseUp);
     }
@@ -37,10 +40,11 @@ public class HostBehaviorTests
     }
 
     [Fact]
-    public async Task Liveness_IgnoresDatabaseAndDegraded_ButFailsOnStalledLoopOrFatalConsumer()
+    public void Liveness_IgnoresDatabaseBrokerAndDegraded_ButFailsOnStalledLoopOrFatalConsumer()
     {
         var (health, signals, time) = Health();
         signals.DatabaseUp = false;
+        signals.BrokerUp = false;
         signals.State = IngestionState.Degraded;
         signals.HasAssignment = false;
 
@@ -52,11 +56,10 @@ public class HostBehaviorTests
         signals.LastHeartbeat = time.GetUtcNow();
         signals.IsConsumerFatal = true;
         Assert.Equal("consumer_fatal_error", health.Live().Reason);
-        await Task.CompletedTask;
     }
 
     [Fact]
-    public async Task Readiness_RequiresAssignmentRunningStateAndDatabase()
+    public async Task Readiness_RequiresAssignmentRunningStateBrokerAndDatabase()
     {
         var (health, signals, _) = Health();
         Assert.True((await health.ReadyAsync(default)).IsHealthy);
@@ -73,6 +76,25 @@ public class HostBehaviorTests
         var result = await health.ReadyAsync(default);
         Assert.False(result.IsHealthy);
         Assert.Equal("database_unavailable", result.Reason);
+    }
+
+    [Fact]
+    public async Task Readiness_BrokerUnavailableWhileAssignmentStillHeld_Is503BrokerUnavailable_LivenessStays200_AndRecovers()
+    {
+        var (health, signals, _) = Health();
+        signals.HasAssignment = true;
+        signals.BrokerUp = false;
+
+        var down = await health.ReadyAsync(default);
+
+        Assert.False(down.IsHealthy);
+        Assert.Equal("unhealthy", down.Status);
+        // Код фиксированный: ни адресов брокера, ни текста исключения в ответ не попадает.
+        Assert.Equal("broker_unavailable", down.Reason);
+        Assert.True(health.Live().IsHealthy);
+
+        signals.BrokerUp = true;
+        Assert.True((await health.ReadyAsync(default)).IsHealthy);
     }
 
     [Fact]
@@ -181,9 +203,34 @@ public class HostBehaviorTests
         Assert.Equal(1, collector.ByTag["ktm.datasaver.messages.rejected[malformed_json]"]);
         var record = Assert.Single(logger.Collector.GetSnapshot());
         Assert.Equal(LogLevel.Error, record.Level);
-        Assert.Contains("topic=ktm.events.raw partition=3 offset=42", record.Message);
+        var fields = Fields(record);
+        Assert.Equal(("ktm.events.raw", "3", "42"), (fields["Topic"], fields["Partition"], fields["Offset"]));
+        // Формат не разобран: происхождение неизвестно, тело недоверенного сообщения в лог не копируется.
+        Assert.True(fields.ContainsKey("Source") && fields.ContainsKey("SourceEventId"));
+        Assert.Null(fields["Source"]);
+        Assert.Null(fields["SourceEventId"]);
         Assert.DoesNotContain("Иванов", record.Message);
+        Assert.All(record.StructuredState!, p => Assert.DoesNotContain("Иванов", p.Value ?? string.Empty));
     }
+
+    [Fact]
+    public async Task RejectionPublisher_ParsedEventRejection_LogsSourceAndSourceEventIdFromEnvelope()
+    {
+        using var meter = new Meter("test-" + Guid.NewGuid());
+        var logger = new FakeLogger<ObservedRejectionPublisher>();
+        var message = EventSamples.Message(EventSamples.Bytes(EventSamples.Skud), partition: 2, offset: 7);
+        var rejected = new[] { new RejectedMessage(message, new RejectionInfo(RejectionKind.Validation, "unsupported_event_type", "d"), new EventOrigin("skud", "48213377")) };
+        var publisher = new ObservedRejectionPublisher(new FakePublisher(RejectionPublishResult.Success), new DataSaverMetrics(meter), logger);
+
+        await publisher.PublishAsync(rejected, default);
+
+        var fields = Fields(Assert.Single(logger.Collector.GetSnapshot()));
+        Assert.Equal(("ktm.events.raw", "2", "7", "skud", "48213377"),
+            (fields["Topic"], fields["Partition"], fields["Offset"], fields["Source"], fields["SourceEventId"]));
+    }
+
+    private static Dictionary<string, string?> Fields(FakeLogRecord record) =>
+        record.StructuredState!.ToDictionary(p => p.Key, p => p.Value);
 
     [Fact]
     public void AdminNotifier_LogsErrorAndCounts()

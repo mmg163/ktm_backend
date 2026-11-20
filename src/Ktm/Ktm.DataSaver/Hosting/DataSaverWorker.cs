@@ -32,8 +32,13 @@ public sealed class DataSaverWorker(
             await loop.RunAsync(stoppingToken);
             logger.LogInformation("Data Saver ingestion loop finished");
         }
-        catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
+            // Штатная остановка по токену host.
+        }
+        catch (Exception ex)
+        {
+            // Ошибка цикла и во время остановки - сбой (commit/запись могли не завершиться): не глотаем.
             logger.LogCritical(ex, "Ingestion loop failed; the process is terminating");
             terminator.Terminate(LoopFailureExitCode, "Ingestion loop failed: " + ex.GetType().Name);
         }

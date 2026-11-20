@@ -53,8 +53,8 @@ public class DataSaverOptionsTests
         Assert.Equal((1000, 30000, 2.0, 0.2), (backoff.InitialMs, backoff.MaxMs, backoff.Multiplier, backoff.JitterFraction));
         var health = provider.GetRequiredService<IOptions<HealthOptions>>().Value;
         Assert.Equal((8080, 60), (health.Port, health.LiveStaleSeconds));
-        // Предел остановки host не меньше Shutdown__TimeoutSeconds (по умолчанию 30).
-        Assert.True(provider.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout >= TimeSpan.FromSeconds(30));
+        // Предел остановки host = Shutdown__TimeoutSeconds (по умолчанию 30) + запас.
+        Assert.Equal(TimeSpan.FromSeconds(30 + ShutdownOptions.HostMarginSeconds), provider.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout);
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class DataSaverOptionsTests
         values["DataSaver:Shutdown:TimeoutSeconds"] = "90";
         using var provider = Build(values);
 
-        Assert.True(provider.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout >= TimeSpan.FromSeconds(90));
+        Assert.Equal(TimeSpan.FromSeconds(90 + ShutdownOptions.HostMarginSeconds), provider.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout);
     }
 
     [Fact]
@@ -147,5 +147,42 @@ public class DataSaverOptionsTests
         {
             File.Delete(file);
         }
+    }
+
+    [Theory]
+    [InlineData(45, false)]
+    [InlineData(46, true)]
+    public void LiveStaleSeconds_MustExceedConnectPlusCommandTimeout(int liveStaleSeconds, bool valid)
+    {
+        var values = Valid();
+        values["DataSaver:Postgres:ConnectTimeoutSeconds"] = "15";
+        values["DataSaver:Postgres:CommandTimeoutSeconds"] = "30";
+        values["DataSaver:Health:LiveStaleSeconds"] = liveStaleSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (valid)
+        {
+            using var provider = Build(values);
+            provider.GetRequiredService<IStartupValidator>().Validate();
+            return;
+        }
+
+        var message = StartupFailure(values);
+        Assert.Contains("DataSaver__Health__LiveStaleSeconds", message);
+        Assert.Contains("DataSaver__Postgres__ConnectTimeoutSeconds", message);
+        Assert.Contains("DataSaver__Postgres__CommandTimeoutSeconds", message);
+        Assert.DoesNotContain(Secret, message);
+    }
+
+    [Fact]
+    public void PoolSizeError_NamesTheSettings()
+    {
+        var values = Valid();
+        values["DataSaver:Postgres:MinPoolSize"] = "20";
+        values["DataSaver:Postgres:MaxPoolSize"] = "10";
+
+        var message = StartupFailure(values);
+
+        Assert.Contains("DataSaver__Postgres__MinPoolSize", message);
+        Assert.Contains("DataSaver__Postgres__MaxPoolSize", message);
     }
 }

@@ -49,6 +49,7 @@ public class IngestionPipelineTests
         Assert.True(result.Verdict.IsAccepted);
         Assert.Equal("48213377", result.Event!.SourceEventId);
         Assert.Same(ValidMessage, result.Message);
+        Assert.Null(result.Origin);
     }
 
     [Fact]
@@ -67,6 +68,8 @@ public class IngestionPipelineTests
         Assert.False(result.Verdict.IsAccepted);
         Assert.Null(result.Event);
         Assert.Equal(rejection, result.Verdict.Rejection);
+        // Событие разобрано: происхождение берётся из конверта, а семантика Event («принято») не меняется.
+        Assert.Equal(new EventOrigin("skud", "48213377"), result.Origin);
     }
 
     [Fact]
@@ -82,6 +85,7 @@ public class IngestionPipelineTests
         Assert.Equal(RejectReasons.UnknownSchemaVersion, result.Verdict.Rejection.Reason);
         Assert.Null(result.Verdict.Rejection.TargetTopic);
         Assert.Same(message, result.Message);
+        Assert.Null(result.Origin);
     }
 
     [Fact]

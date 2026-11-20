@@ -1,10 +1,14 @@
 using System.Diagnostics.Metrics;
 using System.Net;
+using Confluent.Kafka;
+using Confluent.Kafka.Admin;
+using Ktm.DataSaver.Health;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Testcontainers.Kafka;
 using Testcontainers.PostgreSql;
 
 namespace Ktm.DataSaver.IntegrationTests.Host;
@@ -26,7 +30,7 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
         return (response.StatusCode, await response.Content.ReadAsStringAsync());
     }
 
-    private static async Task WaitForAsync(Func<Task<bool>> condition, string what)
+    private static async Task WaitForAsync(Func<Task<bool>> condition, string what, Func<string>? lastObservation = null)
     {
         var deadline = DateTime.UtcNow + Overall;
         while (DateTime.UtcNow < deadline)
@@ -35,7 +39,7 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
             await Task.Delay(200);
         }
 
-        throw new TimeoutException($"Timed out waiting for: {what}");
+        throw new TimeoutException($"Timed out waiting for: {what}" + (lastObservation is null ? string.Empty : $" (last observed: {lastObservation()})"));
     }
 
     private static Task WaitReadyAsync(HttpClient client) =>
@@ -136,17 +140,87 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
     [Fact]
     public async Task ConsumerWithoutAssignment_ReadinessIs503_LivenessIs200()
     {
-        var missingTopic = $"ktm.events.raw.missing.{Guid.NewGuid():N}";
+        // В топике одна партиция: второй участник группы остаётся без назначения (cooperative-sticky не отнимает её у первого).
+        var raw = await kafka.CreateTopicAsync("ktm.events.raw");
+        var rejected = await kafka.CreateTopicAsync("ktm.events.rejected");
+        var group = $"g-{Guid.NewGuid():N}";
         var db = new NpgsqlConnectionStringBuilder(postgres.AppConnectionString);
-        await using var app = new DataSaverAppFactory(DataSaverAppFactory.Settings(kafka.BootstrapServers, missingTopic, "ktm.events.rejected", $"g-{Guid.NewGuid():N}", db));
-        using var client = app.CreateClient();
+        await using var owner = new DataSaverAppFactory(DataSaverAppFactory.Settings(kafka.BootstrapServers, raw, rejected, group, db));
+        using var ownerClient = owner.CreateClient();
+        await WaitReadyAsync(ownerClient);
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await using var idle = new DataSaverAppFactory(DataSaverAppFactory.Settings(kafka.BootstrapServers, raw, rejected, group, db));
+        using var client = idle.CreateClient();
+
+        // Ждём события, а не времени: второй consumer вступил в группу, группа снова стабильна.
+        using var admin = kafka.NewAdmin();
+        var last = string.Empty;
+        await WaitForAsync(async () =>
+        {
+            try
+            {
+                var description = (await admin.DescribeConsumerGroupsAsync([group])).ConsumerGroupDescriptions.Single();
+                last = $"{description.State} members={description.Members.Count}";
+                return description.State == ConsumerGroupState.Stable && description.Members.Count == 2;
+            }
+            catch (DescribeConsumerGroupsException ex)
+            {
+                last = ex.Message;
+                return false;
+            }
+        }, "second consumer joined the group", () => last);
         var ready = await GetAsync(client, "/health/ready");
         var live = await GetAsync(client, "/health/live");
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, ready.Status);
         Assert.Contains("no_partitions_assigned", ready.Body);
+        Assert.Equal(HttpStatusCode.OK, live.Status);
+        Assert.Equal(HttpStatusCode.OK, (await GetAsync(ownerClient, "/health/ready")).Status);
+    }
+
+    [Fact]
+    public async Task BrokerStopped_ReadinessIs503BrokerUnavailableWithinProbeWindow_LivenessStays200()
+    {
+        // Собственный брокер: общий контейнер нужен остальным тестам. Восстановление брокера здесь не проверяется:
+        // после перезапуска контейнера Testcontainers меняется порт, а клиент держит старый адрес (покрыто unit-тестом).
+        await using var broker = new KafkaBuilder("apache/kafka:3.9.1").Build();
+        await broker.StartAsync();
+        var bootstrap = broker.GetBootstrapAddress();
+        string topic;
+        using (var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build())
+        {
+            topic = $"ktm.events.raw.{Guid.NewGuid():N}";
+            await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        }
+
+        var db = new NpgsqlConnectionStringBuilder(postgres.AppConnectionString);
+        var settings = DataSaverAppFactory.Settings(bootstrap, topic, "ktm.events.rejected", $"g-{Guid.NewGuid():N}", db);
+        // Назначение должно пережить остановку брокера дольше окна проверки: иначе ready скажет no_partitions_assigned.
+        settings["DataSaver:Kafka:SessionTimeoutMs"] = "60000";
+        await using var app = new DataSaverAppFactory(settings);
+        using var client = app.CreateClient();
+        await WaitReadyAsync(client);
+
+        await broker.StopAsync();
+
+        // Предел по спеке: интервал кэша (5 с) + предел проверки (2 с); запас на опрос и сеть.
+        var window = HealthSignals.BrokerCacheTtl + HealthSignals.ProbeTimeout + TimeSpan.FromSeconds(8);
+        var deadline = DateTime.UtcNow + window;
+        (HttpStatusCode Status, string Body) ready;
+        do
+        {
+            ready = await GetAsync(client, "/health/ready");
+            if (ready.Status == HttpStatusCode.ServiceUnavailable) break;
+            await Task.Delay(200);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        var live = await GetAsync(client, "/health/live");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ready.Status);
+        Assert.Contains("broker_unavailable", ready.Body);
+        // Адрес брокера в ответ не попадает.
+        Assert.DoesNotContain(new Uri("tcp://" + bootstrap.Replace("PLAINTEXT://", string.Empty, StringComparison.Ordinal)).Host, ready.Body);
+        Assert.DoesNotContain(bootstrap, ready.Body);
         Assert.Equal(HttpStatusCode.OK, live.Status);
     }
 }

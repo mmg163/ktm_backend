@@ -4,54 +4,68 @@ using Npgsql;
 
 namespace Ktm.DataSaver.Health;
 
-/// <summary>Боевая реализация сигналов: цикл, consumer и короткая проверка БД (<c>SELECT 1</c>, предел 2 с).</summary>
-public sealed class HealthSignals(
-    IngestionLoop loop,
-    KafkaMessageSource consumer,
-    KafkaFatalErrorHandler fatalHandler,
-    NpgsqlDataSource dataSource,
-    ILogger<HealthSignals> logger) : IHealthSignals
+/// <summary>
+/// Боевая реализация сигналов: цикл, consumer, проверка брокера (запрос метаданных, предел 2 с, кэш 5 с) и короткая
+/// проверка БД (<c>SELECT 1</c>, предел 2 с).
+/// </summary>
+public sealed class HealthSignals : IHealthSignals
 {
-    private static readonly TimeSpan DatabaseProbeTimeout = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan BrokerCacheTtl = TimeSpan.FromSeconds(5);
 
-    public DateTimeOffset LastHeartbeat => loop.LastHeartbeat;
+    private readonly IngestionLoop _loop;
+    private readonly KafkaMessageSource _consumer;
+    private readonly KafkaFatalErrorHandler _fatalHandler;
+    private readonly NpgsqlDataSource _dataSource;
+    private readonly ILogger<HealthSignals> _logger;
+    private readonly CachedAvailabilityProbe _broker;
 
-    public IngestionState State => loop.State;
-
-    public bool IsConsumerFatal => fatalHandler.IsFatal;
-
-    public bool HasAssignment
+    public HealthSignals(
+        IngestionLoop loop,
+        KafkaMessageSource consumer,
+        KafkaFatalErrorHandler fatalHandler,
+        NpgsqlDataSource dataSource,
+        TimeProvider time,
+        ILogger<HealthSignals> logger)
     {
-        get
-        {
-            try
+        _loop = loop;
+        _consumer = consumer;
+        _fatalHandler = fatalHandler;
+        _dataSource = dataSource;
+        _logger = logger;
+        // Текст исключения брокера содержит адреса: в лог попадает только тип.
+        _broker = new CachedAvailabilityProbe(
+            _ =>
             {
-                return consumer.Assignment.Count > 0;
-            }
-            catch (ObjectDisposedException)
-            {
-                // Остановка: consumer уже закрыт.
-                return false;
-            }
-        }
+                _consumer.ProbeBroker(ProbeTimeout);
+                return Task.CompletedTask;
+            },
+            time,
+            BrokerCacheTtl,
+            ProbeTimeout,
+            ex => _logger.LogWarning("Readiness broker probe failed: {ErrorType}", ex.GetType().Name));
     }
 
-    public async ValueTask<bool> IsDatabaseAvailableAsync(CancellationToken cancellationToken)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(DatabaseProbeTimeout);
-        try
-        {
-            await using var connection = await dataSource.OpenConnectionAsync(timeout.Token);
-            await using var command = new NpgsqlCommand("SELECT 1", connection);
-            await command.ExecuteScalarAsync(timeout.Token);
-            return true;
-        }
-        catch (Exception ex) when (ex is NpgsqlException or OperationCanceledException or InvalidOperationException or IOException)
-        {
-            // Текст исключения может содержать хост БД: в ответ и в лог попадает только тип.
-            logger.LogWarning("Readiness database probe failed: {ErrorType}", ex.GetType().Name);
-            return false;
-        }
-    }
+    public DateTimeOffset LastHeartbeat => _loop.LastHeartbeat;
+
+    public IngestionState State => _loop.State;
+
+    public bool IsConsumerFatal => _fatalHandler.IsFatal;
+
+    public bool HasAssignment => _consumer.HasAssignment;
+
+    public ValueTask<bool> IsBrokerAvailableAsync(CancellationToken cancellationToken) => _broker.IsAvailableAsync(cancellationToken);
+
+    public ValueTask<bool> IsDatabaseAvailableAsync(CancellationToken cancellationToken) =>
+        DatabaseProbe.RunAsync(
+            async token =>
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(token);
+                await using var command = new NpgsqlCommand("SELECT 1", connection);
+                await command.ExecuteScalarAsync(token);
+            },
+            ProbeTimeout,
+            // Текст исключения может содержать хост БД: в лог попадает только тип.
+            ex => _logger.LogWarning("Readiness database probe failed: {ErrorType}", ex.GetType().Name),
+            cancellationToken);
 }

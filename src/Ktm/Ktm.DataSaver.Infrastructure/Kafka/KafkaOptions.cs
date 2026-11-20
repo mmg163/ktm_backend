@@ -20,6 +20,12 @@ public sealed class KafkaOptions
 
     public string? ClientId { get; set; }
 
+    /// <summary>
+    /// <c>group.instance.id</c> (static membership: перезапуск реплики не вызывает ребаланс в пределах session timeout).
+    /// Необязательный, уникален на реплику; пустое значение не задаётся.
+    /// </summary>
+    public string? GroupInstanceId { get; set; }
+
     /// <summary>PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL; null - по умолчанию библиотеки.</summary>
     public string? SecurityProtocol { get; set; }
 

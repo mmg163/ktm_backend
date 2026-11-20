@@ -156,6 +156,26 @@ internal static class DataSaverChecks
         if (o.LiveStaleSeconds < 1) yield return "DataSaver__Health__LiveStaleSeconds must be positive.";
     }
 
+    /// <summary>
+    /// Запись пачки (подключение + команда) не отмечает heartbeat и в худшем случае длится Connect + Command секунд;
+    /// если liveness-порог не больше, штатно долгая запись при недоступной БД убила бы процесс перезапуском, который БД не лечит.
+    /// </summary>
+    public static IEnumerable<string> LiveStale(HealthOptions health, PostgresOptions postgres)
+    {
+        if (health.LiveStaleSeconds < 1 || postgres.ConnectTimeoutSeconds < 1 || postgres.CommandTimeoutSeconds < 1)
+        {
+            // Сами значения некорректны: об этом скажут проверки своих опций.
+            yield break;
+        }
+
+        var worst = (long)postgres.ConnectTimeoutSeconds + postgres.CommandTimeoutSeconds;
+        if (worst >= health.LiveStaleSeconds)
+        {
+            yield return "DataSaver__Health__LiveStaleSeconds must be greater than DataSaver__Postgres__ConnectTimeoutSeconds + " +
+                         $"DataSaver__Postgres__CommandTimeoutSeconds ({worst} s): a long database write does not touch the liveness heartbeat.";
+        }
+    }
+
     public static IEnumerable<string> Trust(TrustOptions o)
     {
         string? error = null;
@@ -183,5 +203,26 @@ internal static class DataSaverChecks
         {
             return true;
         }
+    }
+}
+
+/// <summary>Согласованность <see cref="HealthOptions"/> с таймаутами БД: проверка нескольких секций при старте.</summary>
+internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> postgres) : IValidateOptions<HealthOptions>
+{
+    public ValidateOptionsResult Validate(string? name, HealthOptions options)
+    {
+        PostgresOptions value;
+        try
+        {
+            value = postgres.Value;
+        }
+        catch (OptionsValidationException)
+        {
+            // Некорректные настройки Postgres сообщит их собственная проверка.
+            return ValidateOptionsResult.Success;
+        }
+
+        var failures = DataSaverChecks.LiveStale(options, value).ToList();
+        return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 }

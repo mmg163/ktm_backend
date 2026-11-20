@@ -1,6 +1,6 @@
+using Ktm.DataSaver.Configuration;
 using Ktm.DataSaver.Core.Ingestion;
 using Microsoft.Extensions.Options;
-using Ktm.DataSaver.Configuration;
 
 namespace Ktm.DataSaver.Health;
 
@@ -17,6 +17,9 @@ public interface IHealthSignals
 
     /// <summary>Consumer подписан и получил назначение партиций.</summary>
     bool HasAssignment { get; }
+
+    /// <summary>Брокер Kafka отвечает на запрос метаданных (активная проверка с пределом и кэшем; наличие назначения у клиента связь не доказывает).</summary>
+    ValueTask<bool> IsBrokerAvailableAsync(CancellationToken cancellationToken);
 
     ValueTask<bool> IsDatabaseAvailableAsync(CancellationToken cancellationToken);
 }
@@ -53,6 +56,11 @@ public sealed class HealthEvaluator(IHealthSignals signals, IOptions<HealthOptio
         if (signals.State == IngestionState.Degraded)
         {
             return new HealthResult(false, "ingestion_degraded");
+        }
+
+        if (!await signals.IsBrokerAvailableAsync(cancellationToken))
+        {
+            return new HealthResult(false, "broker_unavailable");
         }
 
         return await signals.IsDatabaseAvailableAsync(cancellationToken)
