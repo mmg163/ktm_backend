@@ -16,6 +16,9 @@
         <!-- Core: проверка по JSON Schema draft 2020-12 (docs/api/kafka-event.schema.json); MIT, без зависимостей от Kafka/Npgsql/ASP.NET -->
         <PackageVersion Include="LateApexEarlySpeed.Json.Schema" Version="5.0.0" />
 
+        <!-- Core: только абстракции логирования (MIT), единственная допустимая зависимость цикла приёма -->
+        <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
+
         <!-- Тесты -->
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />

@@ -6,6 +6,7 @@
 
     <ItemGroup>
         <PackageReference Include="LateApexEarlySpeed.Json.Schema" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     </ItemGroup>
 
     <ItemGroup>
