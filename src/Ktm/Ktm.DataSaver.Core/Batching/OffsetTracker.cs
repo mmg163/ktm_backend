@@ -28,7 +28,11 @@ public sealed class OffsetTracker
     /// <summary>Сброс после успешного commit.</summary>
     public void Reset() => _lastOffsets.Clear();
 
-    /// <summary>Удаление партиций при отзыве (rebalance): их offset больше не коммитится этим экземпляром.</summary>
+    /// <summary>
+    /// Удаление партиций при отзыве (rebalance): их offset больше не коммитится этим экземпляром.
+    /// Контракт: трекер не помнит об отзыве. Вызывающий (3.8) не должен вызывать Track для сообщений отозванных
+    /// партиций; Track после Revoke начинает партицию заново (корректно при повторном назначении).
+    /// </summary>
     public void Revoke(IEnumerable<TopicPartitionKey> partitions)
     {
         foreach (var partition in partitions)

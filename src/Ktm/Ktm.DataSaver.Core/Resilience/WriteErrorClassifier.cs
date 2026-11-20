@@ -15,13 +15,14 @@ public static class WriteErrorClassifier
             {
                 var classes = aggregate.InnerExceptions.Select(Classify).ToList();
                 if (classes.Contains(WriteErrorClass.FatalConfig)) return WriteErrorClass.FatalConfig;
-                if (classes.Contains(WriteErrorClass.Data)) return WriteErrorClass.Data;
-                return WriteErrorClass.Transient;
+                // Сбой сети не должен превращать валидные события в отбраковку: Transient сильнее Data.
+                if (classes.Contains(WriteErrorClass.Transient)) return WriteErrorClass.Transient;
+                return classes.Count > 0 ? WriteErrorClass.Data : WriteErrorClass.Transient;
             }
 
             if (current is ISqlStateError { SqlState: { Length: > 0 } sqlState })
             {
-                return Classify(sqlState);
+                return ClassifySqlState(sqlState);
             }
 
             if (current is TimeoutException or SocketException or IOException)
@@ -34,20 +35,32 @@ public static class WriteErrorClassifier
         return WriteErrorClass.Transient;
     }
 
-    public static WriteErrorClass Classify(string? sqlState)
+    /// <summary>
+    /// Классификация по SQLSTATE. Неизвестный или пустой код = Transient: повтор безопасен для данных
+    /// (ничего не теряется и не отбраковывается).
+    /// </summary>
+    public static WriteErrorClass ClassifySqlState(string? sqlState)
     {
         if (string.IsNullOrEmpty(sqlState) || sqlState.Length < 2)
         {
             return WriteErrorClass.Transient;
         }
 
-        return sqlState switch
+        var classCode = sqlState.AsSpan(0, 2);
+
+        // Ошибки конфигурации/программы, повтор не лечит: аутентификация, нет БД/схемы/таблицы/прав, синтаксис, не поддерживается.
+        if (classCode is "28" or "42" or "3D" or "3F" or "0A")
         {
-            "42501" or "42P01" => WriteErrorClass.FatalConfig,
-            _ when sqlState.StartsWith("28", StringComparison.Ordinal) => WriteErrorClass.FatalConfig,
-            _ when sqlState.StartsWith("22", StringComparison.Ordinal) => WriteErrorClass.Data,
-            _ when sqlState.StartsWith("23", StringComparison.Ordinal) => WriteErrorClass.Data,
-            _ => WriteErrorClass.Transient,
-        };
+            return WriteErrorClass.FatalConfig;
+        }
+
+        if (classCode is "22" or "23")
+        {
+            return WriteErrorClass.Data;
+        }
+
+        // Явно временные: 57P01-03 (остановка/перезапуск сервера), 53xxx (ресурсы), 40001, 40P01, 08xxx (соединение);
+        // всё прочее тоже Transient по умолчанию.
+        return WriteErrorClass.Transient;
     }
 }

@@ -1,7 +1,7 @@
 namespace Ktm.DataSaver.Core.Resilience;
 
 /// <summary>
-/// Пауза между повторами записи: min(Initial * Multiplier^n, Max) с джиттером +-JitterFraction.
+/// Пауза между повторами записи: min(Initial * Multiplier^n, Max) с джиттером +-JitterFraction; итог не превышает Max.
 /// Источник случайности внедряется (возвращает значение в [0, 1)). Не потокобезопасен.
 /// </summary>
 public sealed class BackoffPolicy
@@ -40,7 +40,8 @@ public sealed class BackoffPolicy
         }
 
         var jitter = 1.0 + (_nextRandom() * 2.0 - 1.0) * _jitterFraction;
-        return TimeSpan.FromMilliseconds(baseMs * jitter);
+        // Потолок жёсткий: джиттер не выводит паузу за Max.
+        return TimeSpan.FromMilliseconds(Math.Min(baseMs * jitter, _max.TotalMilliseconds));
     }
 
     /// <summary>Сброс после успешной записи.</summary>

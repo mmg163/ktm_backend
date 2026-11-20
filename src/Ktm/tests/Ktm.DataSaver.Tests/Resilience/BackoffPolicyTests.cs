@@ -28,12 +28,39 @@ public class BackoffPolicyTests
     }
 
     [Fact]
-    public void Jitter_applies_to_ceiling_too()
+    public void Ceiling_is_hard_after_jitter()
     {
-        var policy = Create(() => 0.999999);
-        for (var i = 0; i < 10; i++) policy.NextDelay();
+        var high = Create(() => 0.999999);
+        var low = Create(() => 0.0);
+        for (var i = 0; i < 10; i++)
+        {
+            high.NextDelay();
+            low.NextDelay();
+        }
 
-        Assert.InRange(policy.NextDelay().TotalSeconds, 24, 36);
+        Assert.Equal(30, high.NextDelay().TotalSeconds, 6);
+        Assert.Equal(24, low.NextDelay().TotalSeconds, 6);
+    }
+
+    [Fact]
+    public void Zero_jitter_and_multiplier_one_give_constant_delay_even_after_many_attempts()
+    {
+        var policy = new BackoffPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 1.0, 0.0, () => 0.9);
+
+        for (var i = 0; i < 100_000; i++)
+        {
+            Assert.Equal(TimeSpan.FromSeconds(1), policy.NextDelay());
+        }
+    }
+
+    [Fact]
+    public void Huge_number_of_attempts_stays_at_ceiling_without_overflow()
+    {
+        var policy = Create(() => 0.5);
+
+        for (var i = 0; i < 10_000; i++) policy.NextDelay();
+
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.NextDelay());
     }
 
     [Fact]

@@ -68,4 +68,20 @@ public class OffsetTrackerTests
 
         Assert.Equal(new PartitionOffset("t", 1, 3), Assert.Single(tracker.GetOffsetsToCommit()));
     }
+
+    [Fact]
+    public void Track_after_revoke_or_reset_starts_partition_from_scratch()
+    {
+        var tracker = new OffsetTracker();
+        tracker.Track(new PartitionOffset("t", 0, 50));
+        tracker.Revoke([new TopicPartitionKey("t", 0)]);
+
+        // Контракт: старая позиция не возвращается; новое Track (повторное назначение) начинает с нуля.
+        tracker.Track(new PartitionOffset("t", 0, 3));
+        Assert.Equal(4, Assert.Single(tracker.GetOffsetsToCommit()).Offset);
+
+        tracker.Reset();
+        tracker.Track(new PartitionOffset("t", 0, 1));
+        Assert.Equal(2, Assert.Single(tracker.GetOffsetsToCommit()).Offset);
+    }
 }

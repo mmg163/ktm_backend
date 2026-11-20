@@ -40,6 +40,18 @@ public class BatcherTests
     }
 
     [Fact]
+    public void Expired_deadline_gives_zero_not_negative_wait()
+    {
+        var time = new FakeTimeProvider();
+        var batcher = new Batcher<int>(100, MaxWait, time);
+        batcher.Add(1);
+
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(TimeSpan.Zero, batcher.TimeUntilDeadline());
+    }
+
+    [Fact]
     public void Empty_batch_is_never_ready_regardless_of_time()
     {
         var time = new FakeTimeProvider();
