@@ -18,7 +18,7 @@ public sealed class KafkaMessageSourceUnitTests
         new KafkaFatalErrorHandler(new NoopTerminator(), new FakeLogger<KafkaFatalErrorHandler>(), Throttle),
         new FakeLogger<KafkaMessageSource>(), Throttle);
 
-    private static LogThrottle Throttle => new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval);
+    private static readonly LogThrottle Throttle = new(TimeProvider.System, LogThrottle.DefaultInterval);
 
     [Fact]
     public void HasAssignment_FollowsRebalanceHandlers_WithoutAskingTheConsumer()

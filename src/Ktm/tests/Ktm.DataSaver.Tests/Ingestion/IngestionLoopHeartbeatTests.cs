@@ -91,4 +91,51 @@ public sealed class IngestionLoopHeartbeatTests
             await run;
         }
     }
+
+    [Fact]
+    public async Task ConsumeWaitThenWrite_EachJustUnderThreshold_LivenessStaysHealthy()
+    {
+        // Первое сообщение запускает отсчёт закрытия пачки (59 с): Consume ждёт 59 с и возвращает null, затем запись 59 с.
+        var wait = TimeSpan.FromSeconds(LiveStaleSeconds - 1);
+        var h = new Harness(wait, wait, batchSize: 100);
+        var health = Evaluator(h);
+        HealthResult? afterWrite = null;
+        h.Source.Enqueue(Harness.Valid(0, 0));
+        h.Store.OnCall = _ =>
+        {
+            h.Time.Advance(wait);
+            afterWrite = health.Live();
+            h.Stop.Cancel();
+        };
+
+        await h.RunAsync();
+
+        // Ожидание Consume и запись не суммируются: после Consume цикл отмечается до записи.
+        Assert.NotNull(afterWrite);
+        Assert.True(afterWrite.IsHealthy, $"liveness is {afterWrite.Reason} after write");
+    }
+
+    [Fact]
+    public async Task HangingConsume_LivenessReportsLoopStalled()
+    {
+        var h = new Harness();
+        var health = Evaluator(h);
+        h.Source.Hang = true;
+        var run = Task.Run(h.RunAsync);
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => h.Source.ConsumeCalls > 0, TimeSpan.FromSeconds(10)), "consume was not started");
+
+            h.Time.Advance(TimeSpan.FromSeconds(LiveStaleSeconds + 1));
+
+            var result = health.Live();
+            Assert.False(result.IsHealthy);
+            Assert.Equal("loop_stalled", result.Reason);
+        }
+        finally
+        {
+            h.Stop.Cancel();
+            await run;
+        }
+    }
 }

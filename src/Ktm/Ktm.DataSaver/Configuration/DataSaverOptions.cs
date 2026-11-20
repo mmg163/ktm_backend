@@ -158,29 +158,32 @@ internal static class DataSaverChecks
     }
 
     /// <summary>
-    /// Запись пачки в БД (подключение + команда: Connect + Command секунд) и публикация в rejected (до
-    /// ProducerMessageTimeoutMs) - блокирующие ожидания, во время которых heartbeat не отмечается; после каждого из них
-    /// цикл отмечается (Touch), поэтому ожидания не суммируются и худший случай - максимум из двух. Если liveness-порог
-    /// не больше него, штатно долгое ожидание при недоступном приёмнике убило бы процесс перезапуском, который его не лечит.
+    /// Три блокирующих ожидания цикла, во время которых heartbeat не отмечается: Consume (до PollInterval), запись пачки
+    /// в БД (Connect + Command секунд) и публикация в rejected (до ProducerMessageTimeoutMs). После каждого из них цикл
+    /// отмечается (Touch), поэтому ожидания не суммируются - худший случай максимум из трёх. Commit - исключение: отметки
+    /// вокруг него нет. Если liveness-порог не больше этого максимума, штатно долгое ожидание убило бы процесс
+    /// перезапуском, который его не лечит.
     /// </summary>
-    public static IEnumerable<string> LiveStale(HealthOptions health, PostgresOptions postgres, KafkaOptions kafka)
+    public static IEnumerable<string> LiveStale(HealthOptions health, PostgresOptions postgres, KafkaOptions kafka, int pollIntervalMs)
     {
         if (health.LiveStaleSeconds < 1 || postgres.ConnectTimeoutSeconds < 1 || postgres.CommandTimeoutSeconds < 1
-            || kafka.ProducerMessageTimeoutMs < 1)
+            || kafka.ProducerMessageTimeoutMs < 1 || pollIntervalMs < 1)
         {
             // Сами значения некорректны: об этом скажут проверки своих опций.
             yield break;
         }
 
+        var pollWait = (long)Math.Ceiling(pollIntervalMs / 1000.0);
         var databaseWait = (long)postgres.ConnectTimeoutSeconds + postgres.CommandTimeoutSeconds;
         var publishWait = (long)Math.Ceiling(kafka.ProducerMessageTimeoutMs / 1000.0);
-        var worst = Math.Max(databaseWait, publishWait);
+        var worst = Math.Max(pollWait, Math.Max(databaseWait, publishWait));
         if (worst >= health.LiveStaleSeconds)
         {
             yield return "DataSaver__Health__LiveStaleSeconds must be greater than the longest blocking wait of the loop: " +
-                         $"max(DataSaver__Postgres__ConnectTimeoutSeconds + DataSaver__Postgres__CommandTimeoutSeconds = {databaseWait} s, " +
+                         $"max(ceil(DataSaver__PollIntervalMs / 1000) = {pollWait} s, " +
+                         $"DataSaver__Postgres__ConnectTimeoutSeconds + DataSaver__Postgres__CommandTimeoutSeconds = {databaseWait} s, " +
                          $"ceil(DataSaver__Kafka__ProducerMessageTimeoutMs / 1000) = {publishWait} s) = {worst} s. " +
-                         "A database write and a publish to the rejected topic are blocking waits that do not touch the liveness heartbeat.";
+                         "Consume, a database write and a publish to the rejected topic are blocking waits that do not touch the liveness heartbeat.";
         }
     }
 
@@ -215,16 +218,18 @@ internal static class DataSaverChecks
 }
 
 /// <summary>Согласованность <see cref="HealthOptions"/> с таймаутами БД: проверка нескольких секций при старте.</summary>
-internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> postgres, IOptions<KafkaOptions> kafka) : IValidateOptions<HealthOptions>
+internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> postgres, IOptions<KafkaOptions> kafka, IOptions<DataSaverOptions> root) : IValidateOptions<HealthOptions>
 {
     public ValidateOptionsResult Validate(string? name, HealthOptions options)
     {
         PostgresOptions postgresValue;
         KafkaOptions kafkaValue;
+        int pollIntervalMs;
         try
         {
             postgresValue = postgres.Value;
             kafkaValue = kafka.Value;
+            pollIntervalMs = root.Value.PollIntervalMs;
         }
         catch (OptionsValidationException)
         {
@@ -232,7 +237,7 @@ internal sealed class LiveStaleConsistencyValidator(IOptions<PostgresOptions> po
             return ValidateOptionsResult.Success;
         }
 
-        var failures = DataSaverChecks.LiveStale(options, postgresValue, kafkaValue).ToList();
+        var failures = DataSaverChecks.LiveStale(options, postgresValue, kafkaValue, pollIntervalMs).ToList();
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 }

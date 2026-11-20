@@ -35,6 +35,8 @@ public class DataSaverOptionsTests
         var ex = Assert.ThrowsAny<Exception>(() => provider.GetRequiredService<IStartupValidator>().Validate());
         // Несколько опций с ошибками агрегируются в AggregateException.
         var failures = ex is AggregateException aggregate ? aggregate.InnerExceptions : [ex];
+        // Только ошибка валидации: иное исключение (например, из PostConfigure) - не штатная диагностика старта.
+        Assert.All(failures, f => Assert.IsType<OptionsValidationException>(f));
         return string.Join("; ", failures.Select(f => f.Message));
     }
 
@@ -149,25 +151,34 @@ public class DataSaverOptionsTests
         }
     }
 
-    // Ожидания записи в БД (Connect + Command) и публикации (ceil(P / 1000)) не суммируются: сравнивается максимум.
-    // Равенство порогу - отказ. Столбцы: Connect, Command, ProducerMessageTimeoutMs, LiveStaleSeconds, валидно ли.
+    // Ожидания Consume (ceil(Poll / 1000)), записи в БД (Connect + Command) и публикации (ceil(P / 1000)) не суммируются:
+    // сравнивается максимум. Равенство порогу - отказ. Столбцы: Connect, Command, ProducerMessageTimeoutMs, PollIntervalMs,
+    // LiveStaleSeconds, валидно ли.
     [Theory]
-    [InlineData(15, 30, 30000, 46, true)]      // по умолчанию: БД 45 с < 46
-    [InlineData(15, 30, 30000, 45, false)]     // БД 45 с = порогу
-    [InlineData(15, 30, 59000, 60, true)]      // Kafka 59 с < 60
-    [InlineData(15, 30, 60000, 60, false)]     // Kafka 60 с = порогу
-    [InlineData(15, 30, 59001, 60, false)]     // ceil(59.001) = 60
-    [InlineData(1, 1, 60000, 60, false)]       // максимум - Kafka при мелком Connect + Command
-    [InlineData(15, 45, 1000, 60, false)]      // максимум - БД при мелком P
-    [InlineData(15, 30, 45000, 60, true)]      // сумма 90 больше порога, максимум 45 - меньше: проходит
-    [InlineData(15, 30, int.MaxValue, 60, false)] // без переполнения
-    public void LiveStaleSeconds_MustExceedTheLongestBlockingWait_MaxOfDatabaseAndPublish(
-        int connect, int command, int producerMs, int liveStaleSeconds, bool valid)
+    [InlineData(15, 30, 30000, 1000, 46, true)]      // по умолчанию: БД 45 с < 46
+    [InlineData(15, 30, 30000, 1000, 45, false)]     // БД 45 с = порогу
+    [InlineData(15, 30, 59000, 1000, 60, true)]      // Kafka 59 с < 60
+    [InlineData(15, 30, 60000, 1000, 60, false)]     // Kafka 60 с = порогу
+    [InlineData(15, 30, 59001, 1000, 60, false)]     // ceil(59.001) = 60
+    [InlineData(1, 1, 60000, 1000, 60, false)]       // максимум - Kafka при мелком Connect + Command
+    [InlineData(15, 45, 1000, 1000, 60, false)]      // максимум - БД при мелком P
+    [InlineData(15, 30, 45000, 1000, 60, true)]      // сумма 90 больше порога, максимум 45 - меньше: проходит
+    [InlineData(15, 30, int.MaxValue, 1000, 60, false)] // без переполнения
+    [InlineData(1, 1, 1000, 60000, 60, false)]       // Poll 60 с = порогу
+    [InlineData(1, 1, 1000, 59000, 60, true)]        // Poll 59 с на 1 с меньше порога
+    [InlineData(1, 1, 1000, 59001, 60, false)]       // ceil(59.001) = 60
+    [InlineData(1, 1, 1000, 90000, 60, false)]       // Poll 90 с при пороге 60
+    [InlineData(1, 1, 1000, 1500, 2, false)]         // ceil(1.5) = 2 = порогу
+    [InlineData(1, 1, 1000, 1500, 3, true)]
+    [InlineData(29, 30, 1000, 2000, 60, true)]       // Poll 2 при Connect + Command = 59 и пороге 60
+    public void LiveStaleSeconds_MustExceedTheLongestBlockingWait_MaxOfPollDatabaseAndPublish(
+        int connect, int command, int producerMs, int pollMs, int liveStaleSeconds, bool valid)
     {
         var values = Valid();
         values["DataSaver:Postgres:ConnectTimeoutSeconds"] = connect.ToString(System.Globalization.CultureInfo.InvariantCulture);
         values["DataSaver:Postgres:CommandTimeoutSeconds"] = command.ToString(System.Globalization.CultureInfo.InvariantCulture);
         values["DataSaver:Kafka:ProducerMessageTimeoutMs"] = producerMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        values["DataSaver:PollIntervalMs"] = pollMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
         values["DataSaver:Health:LiveStaleSeconds"] = liveStaleSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         if (valid)
@@ -179,10 +190,23 @@ public class DataSaverOptionsTests
 
         var message = StartupFailure(values);
         Assert.Contains("DataSaver__Health__LiveStaleSeconds", message);
+        Assert.Contains("DataSaver__PollIntervalMs", message);
         Assert.Contains("DataSaver__Postgres__ConnectTimeoutSeconds", message);
         Assert.Contains("DataSaver__Postgres__CommandTimeoutSeconds", message);
         Assert.Contains("DataSaver__Kafka__ProducerMessageTimeoutMs", message);
         Assert.DoesNotContain(Secret, message);
+    }
+
+    [Fact]
+    public void NonPositivePollInterval_ReportsOnlyItself_NotLiveStaleConflict()
+    {
+        var values = Valid();
+        values["DataSaver:PollIntervalMs"] = "0";
+
+        var message = StartupFailure(values);
+
+        Assert.Contains("DataSaver__PollIntervalMs", message);
+        Assert.DoesNotContain("longest blocking wait", message);
     }
 
     [Fact]
@@ -246,5 +270,53 @@ public class DataSaverOptionsTests
 
         Assert.Contains("DataSaver__Postgres__MinPoolSize", message);
         Assert.Contains("DataSaver__Postgres__MaxPoolSize", message);
+    }
+
+    [Fact]
+    public void ResolveSaslPasswordFile_IsIdempotent_NoFalseConflictOnSecondCall()
+    {
+        var file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, "from-file\n");
+            var options = new KafkaOptions { SaslPasswordFile = file };
+
+            options.ResolveSaslPasswordFile();
+            options.ResolveSaslPasswordFile();
+
+            Assert.Null(options.SaslPasswordError);
+            Assert.Equal("from-file", options.SaslPassword);
+
+            // Явный пароль вместе с файлом остаётся конфликтом и при повторном вызове.
+            var conflicting = new KafkaOptions { SaslPassword = Secret, SaslPasswordFile = file };
+            conflicting.ResolveSaslPasswordFile();
+            conflicting.ResolveSaslPasswordFile();
+            Assert.NotNull(conflicting.SaslPasswordError);
+            Assert.Equal(Secret, conflicting.SaslPassword);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void SaslPasswordError_CannotBeInjectedThroughConfiguration()
+    {
+        var values = Valid();
+        values["DataSaver:Kafka:SaslPasswordError"] = "injected";
+        using var provider = Build(values);
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        Assert.Null(provider.GetRequiredService<IOptions<KafkaOptions>>().Value.SaslPasswordError);
+    }
+
+    [Fact]
+    public void LogThrottle_IsRegisteredAsSingleton()
+    {
+        using var provider = Build(Valid());
+
+        Assert.Same(provider.GetRequiredService<LogThrottle>(), provider.GetRequiredService<LogThrottle>());
     }
 }

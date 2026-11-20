@@ -60,8 +60,10 @@ public sealed class IngestionLoop(
     public int RetryCount => Volatile.Read(ref _retryCount);
 
     /// <summary>
-    /// Момент последней отметки цикла (D-10, liveness): начало итерации и каждая итерация ожидания backoff, в том числе
-    /// в состоянии <c>Degraded</c>. Читается из потока health-проверки.
+    /// Момент последней отметки цикла (D-10, liveness): начало итерации, окончание ожидания Consume (с IdleGuard) до
+    /// записи, успешная запись и успешная публикация в rejected, каждая итерация ожидания backoff (в том числе в
+    /// <c>Degraded</c>). Commit и failureHandler - исключения: отметки вокруг них нет. Три блокирующих ожидания (Consume,
+    /// запись, публикация) не суммируются: между ними есть отметка. Читается из потока health-проверки.
     /// </summary>
     public DateTimeOffset LastHeartbeat => new(Interlocked.Read(ref _heartbeatTicks), TimeSpan.Zero);
 
@@ -116,6 +118,9 @@ public sealed class IngestionLoop(
                 {
                     await IdleGuardAsync(started, wait);
                 }
+
+                // Ожидание Consume (до PollInterval) закончилось: отмечаемся до записи, чтобы оно не суммировалось с ней.
+                Touch();
 
                 if (batcher.TryTakeReady() is { } batch && !await ProcessBatchAsync(batch))
                 {
@@ -272,8 +277,9 @@ public sealed class IngestionLoop(
             try
             {
                 await store.WriteAsync(items.Select(i => i.Event).ToList(), IoToken);
-                // Во время самой записи отметки нет: от ложного loop_stalled защищает валидатор (Connect + Command < LiveStaleSeconds).
-                // Touch после записи нужен, чтобы ожидания записи и публикации (и commit) не суммировались в одно окно без отметки.
+                // Во время самой записи отметки нет: от ложного loop_stalled защищает валидатор
+                // (LiveStaleSeconds > max(Poll, Connect + Command, ProducerMessageTimeout)).
+                // Touch после записи нужен, чтобы ожидания записи и публикации не суммировались в одно окно без отметки.
                 Touch();
                 return true;
             }
@@ -472,6 +478,8 @@ public sealed class IngestionLoop(
                 {
                     await IdleGuardAsync(started, wait);
                 }
+
+                Touch();
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested)
             {

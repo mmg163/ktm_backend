@@ -44,6 +44,8 @@ public sealed class KafkaOptions
     /// </summary>
     public string? SaslPasswordError { get; private set; }
 
+    private string? _passwordReadFromFile;
+
     public int SessionTimeoutMs { get; set; } = 45000;
 
     /// <summary>Предел ожидания подтверждения публикации отбракованного брокером.</summary>
@@ -57,6 +59,13 @@ public sealed class KafkaOptions
     public void ResolveSaslPasswordFile()
     {
         SaslPasswordError = null;
+        if (_passwordReadFromFile is not null && SaslPassword == _passwordReadFromFile)
+        {
+            // Повторный вызов: пароль, подставленный из файла предыдущим вызовом, не считается заданным пользователем.
+            SaslPassword = null;
+        }
+
+        _passwordReadFromFile = null;
         if (string.IsNullOrWhiteSpace(SaslPasswordFile))
         {
             return;
@@ -71,6 +80,7 @@ public sealed class KafkaOptions
         try
         {
             SaslPassword = File.ReadAllText(SaslPasswordFile).TrimEnd('\r', '\n');
+            _passwordReadFromFile = SaslPassword;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

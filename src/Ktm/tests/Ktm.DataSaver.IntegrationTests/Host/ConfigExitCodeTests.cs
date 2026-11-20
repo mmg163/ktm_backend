@@ -121,4 +121,18 @@ public sealed class ConfigExitCodeTests
         Assert.Contains(path, result.Stderr, StringComparison.Ordinal);
         AssertOneLineWithoutStackOrSecrets(result);
     }
+
+    [Fact]
+    public async Task PollIntervalNotBelowLiveStale_ExitsWith78_OneLineNamingBothSettings()
+    {
+        var environment = ValidBase();
+        environment["DataSaver__PollIntervalMs"] = "90000";
+
+        var result = await RunAsync(environment);
+
+        Assert.Contains("DataSaver__PollIntervalMs", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("DataSaver__Health__LiveStaleSeconds", result.Stderr, StringComparison.Ordinal);
+        // Проверяется только подставленный секрет: пароль БД из ValidBase в сообщение не входит по построению.
+        AssertOneLineWithoutStackOrSecrets(result);
+    }
 }
