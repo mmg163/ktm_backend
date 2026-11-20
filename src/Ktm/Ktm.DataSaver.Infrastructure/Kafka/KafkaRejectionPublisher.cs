@@ -25,6 +25,7 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
     private readonly IProducer<byte[], byte[]> _producer;
     private readonly string _defaultTopic;
     private readonly ILogger<KafkaRejectionPublisher> _logger;
+    private int _disposed;
 
     public KafkaRejectionPublisher(KafkaOptions options, KafkaFatalErrorHandler fatalHandler, ILogger<KafkaRejectionPublisher> logger)
     {
@@ -82,6 +83,11 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _producer.Flush(TimeSpan.FromSeconds(5));
         _producer.Dispose();
     }

@@ -49,12 +49,21 @@ public sealed class IngestionLoop(
     private int _retryCount;
     private int _started;
     private bool _immediateRetryGranted;
+    private long _heartbeatTicks = timeProvider.GetUtcNow().UtcTicks;
 
     /// <summary>Состояние для readiness: <c>Degraded</c> = 503.</summary>
     public IngestionState State => _state;
 
     /// <summary>Число неудачных попыток текущей пачки (0 при нормальной работе).</summary>
     public int RetryCount => Volatile.Read(ref _retryCount);
+
+    /// <summary>
+    /// Момент последней отметки цикла (D-10, liveness): начало итерации и каждая итерация ожидания backoff, в том числе
+    /// в состоянии <c>Degraded</c>. Читается из потока health-проверки.
+    /// </summary>
+    public DateTimeOffset LastHeartbeat => new(Interlocked.Read(ref _heartbeatTicks), TimeSpan.Zero);
+
+    private void Touch() => Interlocked.Exchange(ref _heartbeatTicks, timeProvider.GetUtcNow().UtcTicks);
 
     private CancellationToken IoToken => _deadline.Token;
 
@@ -78,6 +87,7 @@ public sealed class IngestionLoop(
         {
             while (!stop.IsCancellationRequested)
             {
+                Touch();
                 DrainAssignmentChanges();
 
                 var wait = batcher.TimeUntilDeadline() is { } left && left < options.PollInterval ? left : options.PollInterval;
@@ -270,6 +280,7 @@ public sealed class IngestionLoop(
             {
                 var attempt = Interlocked.Increment(ref _retryCount);
                 var errorClass = WriteErrorClassifier.Classify(ex);
+                var coordinates = DescribeBatch(results);
 
                 if (errorClass == WriteErrorClass.Data)
                 {
@@ -291,20 +302,20 @@ public sealed class IngestionLoop(
 
                     if (decision.Kind == WriteFailureKind.DeadLetter && TryAcceptDeadLetter(context, decision, deadLettered))
                     {
-                        logger.LogError(ex, "Write failed with data error; {Count} messages handed over to the failure handler", decision.DeadLetterItems.Count);
+                        logger.LogError(ex, "Write failed with data error; {Count} messages handed over to the failure handler. Batch: {BatchCoordinates}", decision.DeadLetterItems.Count, coordinates);
                         continue;
                     }
 
-                    logger.LogError(ex, "Write failed with data error, attempt {Attempt}; partition stays blocked (no failure handler progress)", attempt);
+                    logger.LogError(ex, "Write failed with data error, attempt {Attempt}; partition stays blocked (no failure handler progress). Batch: {BatchCoordinates}", attempt, coordinates);
                 }
                 else if (errorClass == WriteErrorClass.FatalConfig)
                 {
-                    logger.LogError(ex, "Write failed with configuration/permission error, attempt {Attempt}", attempt);
+                    logger.LogError(ex, "Write failed with configuration/permission error, attempt {Attempt}. Batch: {BatchCoordinates}", attempt, coordinates);
                     adminNotifier.NotifyFatalConfig(ex, attempt);
                 }
                 else
                 {
-                    logger.LogWarning(ex, "Write failed (transient), attempt {Attempt}", attempt);
+                    logger.LogWarning(ex, "Write failed (transient), attempt {Attempt}. Batch: {BatchCoordinates}", attempt, coordinates);
                 }
 
                 EnterDegraded();
@@ -315,6 +326,12 @@ public sealed class IngestionLoop(
             }
         }
     }
+
+    /// <summary>Координаты пачки для лога: топик, партиция, диапазон offset и число сообщений; без тел сообщений.</summary>
+    private static string DescribeBatch(IEnumerable<PipelineResult> results) =>
+        string.Join("; ", results
+            .GroupBy(r => (r.Message.Topic, r.Message.Partition))
+            .Select(g => $"{g.Key.Topic}[{g.Key.Partition}] offsets {g.Min(r => r.Message.Offset)}..{g.Max(r => r.Message.Offset)} ({g.Count()} msgs)"));
 
     /// <summary>
     /// Решение DeadLetter принимается, только если все сообщения принадлежат текущей пачке и набор реально вырос;
@@ -410,6 +427,7 @@ public sealed class IngestionLoop(
         var until = timeProvider.GetUtcNow() + delay;
         while (true)
         {
+            Touch();
             var remaining = until - timeProvider.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {

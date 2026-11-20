@@ -9,6 +9,7 @@
         <PackageReference Include="coverlet.collector" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+        <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
         <PackageReference Include="xunit" />
         <PackageReference Include="xunit.runner.visualstudio" />
     </ItemGroup>
@@ -20,6 +21,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\Ktm.DataSaver.Core\Ktm.DataSaver.Core.csproj" />
         <ProjectReference Include="..\..\Ktm.DataSaver.Infrastructure\Ktm.DataSaver.Infrastructure.csproj" />
+        <ProjectReference Include="..\..\Ktm.DataSaver\Ktm.DataSaver.csproj" />
     </ItemGroup>
 
 </Project>

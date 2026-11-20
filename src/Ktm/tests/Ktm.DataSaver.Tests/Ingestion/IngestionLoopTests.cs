@@ -409,4 +409,22 @@ public class IngestionLoopTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => h.Loop.RunAsync(CancellationToken.None));
     }
+
+    [Fact]
+    public async Task WriteFailure_LogsBatchCoordinatesWithoutBodies_AndHeartbeatAdvances()
+    {
+        var h = new Harness();
+        var startedAt = h.Loop.LastHeartbeat;
+        h.Source.Enqueue(Valid(0, 10), Valid(0, 11), Valid(1, 4));
+        h.Store.Fail = call => call == 1 ? new IOException("connection reset") : null;
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        var warning = Assert.Single(h.Logger.Collector.GetSnapshot(), r => r.Message.StartsWith("Write failed (transient)", StringComparison.Ordinal));
+        Assert.Contains("ktm.events.raw[0] offsets 10..11 (2 msgs)", warning.Message);
+        Assert.Contains("ktm.events.raw[1] offsets 4..4 (1 msgs)", warning.Message);
+        Assert.DoesNotContain("e-0-10", warning.Message);
+        Assert.True(h.Loop.LastHeartbeat > startedAt);
+    }
 }

@@ -1,0 +1,41 @@
+using Ktm.DataSaver.IntegrationTests.Kafka;
+using Ktm.DataSaver.IntegrationTests.Postgres;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Npgsql;
+
+namespace Ktm.DataSaver.IntegrationTests.Host;
+
+[CollectionDefinition(Name)]
+public sealed class AppCollection : ICollectionFixture<KafkaFixture>, ICollectionFixture<PostgresFixture>
+{
+    public const string Name = "data-saver-app";
+}
+
+/// <summary>Data Saver in-process (WebApplicationFactory): настройки приходят так же, как в бою, - через конфигурацию <c>DataSaver:*</c>.</summary>
+internal sealed class DataSaverAppFactory(Dictionary<string, string?> settings) : WebApplicationFactory<Program>
+{
+    public static Dictionary<string, string?> Settings(string bootstrapServers, string topic, string rejectedTopic, string group, NpgsqlConnectionStringBuilder db) => new()
+    {
+        ["DataSaver:Kafka:BootstrapServers"] = bootstrapServers,
+        ["DataSaver:Kafka:Topic"] = topic,
+        ["DataSaver:Kafka:RejectedTopic"] = rejectedTopic,
+        ["DataSaver:Kafka:GroupId"] = group,
+        ["DataSaver:Kafka:SessionTimeoutMs"] = "10000",
+        ["DataSaver:Postgres:Host"] = db.Host,
+        ["DataSaver:Postgres:Port"] = db.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["DataSaver:Postgres:Database"] = db.Database,
+        ["DataSaver:Postgres:Username"] = db.Username,
+        ["DataSaver:Postgres:Password"] = db.Password,
+        ["DataSaver:Postgres:SslMode"] = "Disable",
+        ["DataSaver:Batch:MaxWaitMs"] = "200",
+        ["DataSaver:Backoff:InitialMs"] = "200",
+        ["DataSaver:Backoff:MaxMs"] = "1000",
+        ["DataSaver:Shutdown:TimeoutSeconds"] = "10",
+        ["DataSaver:PollIntervalMs"] = "200",
+    };
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder) =>
+        builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings));
+}

@@ -8,7 +8,7 @@ public sealed class KafkaOptions
 {
     public const string SectionName = "Kafka";
 
-    public string BootstrapServers { get; set; } = "localhost:9092";
+    public string BootstrapServers { get; set; } = string.Empty;
 
     /// <summary>Единый входной топик всех источников (D-1).</summary>
     public string Topic { get; set; } = "ktm.events.raw";
@@ -28,6 +28,9 @@ public sealed class KafkaOptions
     public string? SaslUsername { get; set; }
 
     public string? SaslPassword { get; set; }
+
+    /// <summary>Файл с паролем SASL (секрет из файла); взаимоисключающе с <see cref="SaslPassword"/>.</summary>
+    public string? SaslPasswordFile { get; set; }
 
     public int SessionTimeoutMs { get; set; } = 45000;
 

@@ -6,7 +6,6 @@ using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
 using Ktm.DataSaver.Core.Resilience;
 using Ktm.DataSaver.Tests.Decoding;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Ktm.DataSaver.Tests.Ingestion;
@@ -209,6 +208,8 @@ internal sealed class Harness
     public readonly CountingAdminNotifier Notifier = new();
     public readonly IngestionLoop Loop;
 
+    public readonly Microsoft.Extensions.Logging.Testing.FakeLogger<IngestionLoop> Logger = new();
+
     public Harness(int batchSize = 3, params IIngestionStage[] stages)
     {
         Source = new FakeSource(Time, Log);
@@ -227,7 +228,7 @@ internal sealed class Harness
             new BackoffPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 2, 0, () => 0.5),
             new IngestionLoopOptions(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30)),
             Time,
-            NullLogger<IngestionLoop>.Instance);
+            Logger);
     }
 
     public static TopicPartitionKey P(int partition) => new("ktm.events.raw", partition);

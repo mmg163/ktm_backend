@@ -20,6 +20,7 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
     private readonly Lock _gate = new();
     private readonly List<TopicPartitionKey> _assigned = [];
     private readonly List<TopicPartitionKey> _revoked = [];
+    private int _disposed;
     private long _lastConsumeErrorLogTicks = long.MinValue;
     private static readonly long ConsumeErrorLogIntervalTicks = (long)(TimeSpan.FromSeconds(30).TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
 
@@ -148,6 +149,11 @@ public sealed class KafkaMessageSource : IMessageSource, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         try
         {
             _consumer.Close();
