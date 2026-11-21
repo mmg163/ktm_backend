@@ -1,0 +1,13 @@
+== Sustained load: 500 ev/s x 60 s = 30000 events, 3 sources, 9 partitions ==
+Started 2026-11-20T18:22:41.1191401+00:00; OS Microsoft Windows 10.0.26200; .NET 10.0.13; logical CPUs 12
+Git: 2749972 (working tree has uncommitted changes)
+Images: timescale/timescaledb:2.32.1-pg16, apache/kafka:3.9.1
+Docker: 29.9.3, 12 CPU, 8269877248 bytes
+Other processes: parallel tasks on the host are NOT controlled by the test; record them in the protocol
+Bootstrap plaintext://127.0.0.1:60517/; measured containers: 93a15e8d23ec,6d4962ef2e9f
+Dedicated database created for this run; ktm.events count(*) before seed: 0
+ktm.events count(*) after seed of 300000: 300000
+Effective config: DataSaver__Batch__MaxSize=500, DataSaver__Batch__MaxWaitMs=1000, DataSaver__PollIntervalMs=500, DataSaver__Kafka__SessionTimeoutMs=10000, DataSaver__Postgres__SslMode=Disable, DataSaver__Shutdown__TimeoutSeconds=10, Postgres pool max=10
+Group stable: True
+RUN FAILED: TimeoutException: Timed out waiting for: all 30000 rows in the journal (last observed: rows=0)
+Background tasks (publisher, latency poller, ledger, docker stats) still running after shutdown: 0
