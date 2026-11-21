@@ -106,3 +106,9 @@ InvalidOperationException(...)` (условие `cancellationToken.CanBeCanceled
   дало предупреждение «Kafka consumer close failed» (на фатально сброшенном клиенте ожидаемо), на код оно не повлияло.
 - `return Environment.ExitCode` в `Program.cs` работает: коды 70 и 1 доходят до процесса, не превращаясь в 0.
 - Не проверялось: код 70 от фатальной ошибки producer (идемпотентный producer не включён) и код 1 без патча.
+
+## Итоговый прогон 11.2 (2026-11-21, HEAD d9f280e)
+
+- `dotnet build src/Ktm/Ktm.sln -warnaserror`: 0 предупреждений, 0 ошибок.
+- `dotnet test --filter "Category!=Long&Category!=Perf"`: unit 240/240, интеграционные 61/61 (2 мин 36 с).
+- `Category=Long`: 2/2, 2,99 мин. `DatabaseDownFor2Minutes_NoLossNoDuplicates_NoRestart_NoRebalance_BackoffCapped` (2 мин 15 с) и `CommitAgainstFrozenBroker_HangIsVisibleAsLiveness503_HostStopIsBounded_NoLossOnRestart` (27 с) пройдены; записей уровня `fail:` и `EventLogInternal` в выводе нет.
