@@ -24,42 +24,47 @@
 Вне этого solution: REST API для фронтенда (`ktm_revisor`), ролевая интерпретация, движок правил, дашборды. Проект
 `Ktm.Api` в solution - шаблонная заготовка (`/weatherforecast`), функционала не содержит.
 
-## 2. Что реализовано и что нет
+## 2. Контекст системы
 
-Изменение OpenSpec `add-data-saver-core` (`openspec/changes/add-data-saver-core/tasks.md`) **не закрыто**; на `dev` сервис не
-выложен.
+Верхний уровень: пунктиром показано то, что находится вне этого solution.
 
-Реализовано (отмечено в `tasks.md`):
+```mermaid
+flowchart LR
+    subgraph SRC[Источники событий: адаптеры вне solution]
+        SKUD[СКУД<br/>source skud]
+        CV[Видеоаналитика<br/>source cv]
+        DO[1С:ДО<br/>source 1c-do]
+    end
 
-- группы 1-8: каркас solution, разбор и проверка сообщения (схема, лимиты, `\u0000`, совместимость с `jsonb`),
-  конвейер стадий, `OffsetTracker`, `Batcher`, backoff, классификатор ошибок записи, цикл `IngestionLoop`;
-  Kafka-адаптеры (consumer, producer `rejected`, commit), пакетная запись в Npgsql, корректировки, SQL-миграции `db/`,
-  health, остановка, интеграционные тесты на Testcontainers, замер пропускной способности (на локальном Docker, не на dev);
-- группа 9: Dockerfile, `deploy/data-saver/compose.yml`, руководство `docs/manuals/data-saver.md`, 9.4, 9.5;
-- 11.1 (сверка со спеками), 11.3 (`openspec validate`).
+    K[(Kafka<br/>ktm.events.raw<br/>ktm.events.rejected)]
 
-Не закрыто (честно):
+    subgraph THIS[Этот solution]
+        DS[Data Saver]
+    end
 
-| Пункт | Состояние |
-|---|---|
-| 9.2 выкладка на `dev-backend`/`dev-data` | не выполнена |
-| 11.2 прогон `dotnet test` и `Long` как приёмка | не отмечен |
-| 11.4 итоговое ревью и 11.5.1-11.5.9 | открыты. Среди замечаний: нечисловое значение настройки (`DataSaver__Batch__MaxSize=abc`) пока не даёт код 78 (11.5.1); число с очень длинной дробной частью без экспоненты проходит декодер, а БД его отвергнет (11.5.2); `received_at` пересчитывается при повторе записи (11.5.4) |
-| 4.2 | не отмечен, хотя проверка есть (`7.7`); решает лид (10.29) |
-| Группа 10 | вне объёма (ниже) |
+    subgraph DB[PostgreSQL + TimescaleDB]
+        EV[(ktm.events)]
+        COR[(ktm.event_corrections)]
+    end
 
-Вне объёма этой версии:
+    subgraph CONS[Потребители данных: вне solution]
+        API[REST API]
+        FE[Фронтенд ktm_revisor]
+    end
 
-- **C5** (проверка событий по бизнес-правилам): заглушка `AcceptAllEventValidator`, принимает всё;
-- **C6** (политика при ошибках данных `22xxx`/`23xxx`): заглушка `BlockingWriteFailureHandler`, всегда `Retry` - партиция
-  блокируется, пока причина не устранена; данные остаются в Kafka (хранение 7 суток);
-- движок правил отбраковки и топик отбракованных правилами; dead-letter топик (`ktm.events.dlq`);
-- коэффициенты доверия источников берутся из переменных окружения (временно), не из хранилища;
-- экспорт метрик (Prometheus/OTel), канал уведомления администратора (сейчас лог и счётчик);
-- выполнение `Commit`/`Close`/`Flush` не ограничено бюджетом остановки (10.9).
+    SKUD -.-> K
+    CV -.-> K
+    DO -.-> K
+    K -->|ktm.events.raw| DS
+    DS -->|не прошли проверку формата: ktm.events.rejected| K
+    DS -->|пачками, идемпотентно| EV
+    DS --> COR
+    EV -.-> API
+    COR -.-> API
+    API -.-> FE
+```
 
-Замер (`docs/test-protocols/data-saver-throughput.md`): на локальном Docker один экземпляр записал 500 соб/с без роста лага,
-минимальная ёмкость 7967 соб/с. Протокол сам оговаривает, что НФТ (`docs/07`) он **не подтверждает**: замер на dev не делался.
+Формат сообщения источников - `docs/api/kafka-event.schema.json`.
 
 ## 3. Схема модулей
 
@@ -133,7 +138,7 @@ flowchart LR
 | Проект | Модуль | Роль |
 |---|---|---|
 | `Ktm.DataSaver.Core` | `Model`, `Decoding` | `ParsedEvent`, `ConsumedMessage`; `EventDecoder`: JSON -> событие, проверка схемы, UTC-микросекунды, причины отбраковки (`malformed_json`, `unknown_schema_version`, `invalid_schema`) |
-| | `Pipeline` | стадии `Accept`/`Reject`, `FormatStage`, порты `IEventValidator` (C5) и `IWriteFailureHandler` (C6) с заглушками |
+| | `Pipeline` | стадии `Accept`/`Reject`, `FormatStage`, порты `IEventValidator` (C5) и `IWriteFailureHandler` (C6) |
 | | `Batching` | `Batcher` (размер или время), `OffsetTracker` |
 | | `Resilience` | `BackoffPolicy`, `WriteErrorClassifier` (временная / конфигурационная / данные) |
 | | `Ingestion` | `IngestionLoop`, порты источника, хранилища, публикации, commit, `ISourceTrustProvider`, `IAdminNotifier` |
@@ -215,7 +220,7 @@ producer `rejected` идемпотентный с `acks=all`.
 
 С умолчаниями правило выполняется: `max(1, 15 + 3 * 10, 30) = 45 < 60`.
 
-**Коэффициенты доверия источников** (временно, до хранилища настроек; применяются после перезапуска)
+**Коэффициенты доверия источников** (задаются переменными окружения, применяются после перезапуска)
 
 | Переменная | По умолчанию | Назначение | Ограничения |
 |---|---|---|---|
@@ -230,8 +235,6 @@ producer `rejected` идемпотентный с `acks=all`.
 | `70` | фатальная ошибка клиента Kafka |
 | `1` | ошибка цикла приёма (лог `Critical`) |
 | `78` | ошибка конфигурации: одна строка в stderr с именем настройки; рестарт её не лечит |
-
-Коды 70 и 1 в автотестах на уровне процесса не проверены (11.5.8, ручной прогон открыт).
 
 ## 5. Сборка, тесты, запуск
 
@@ -248,7 +251,7 @@ dotnet test src/Ktm/Ktm.sln --filter "Category!=Long&Category!=Perf"
 - `Long` - длительные сценарии (остановка БД на 2 минуты, остановка брокера): `--filter "Category=Long"`.
 - `Perf` - замер пропускной способности; без параметров `KTM_PERF_*` пропускается. Команды и параметры - в протоколе
   `docs/test-protocols/data-saver-throughput.md`, п. 7.
-- Фильтр по умолчанию для `Long` не задан (10.12): без `--filter` он запускается вместе с остальными.
+- Фильтр по умолчанию для `Long` не задан: без `--filter` он запускается вместе с остальными.
 
 Запуск (каталог `deploy/data-saver`; подробности, права файла секрета и остановка - в руководстве):
 
