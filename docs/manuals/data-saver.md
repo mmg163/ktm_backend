@@ -11,8 +11,9 @@
 ## 1. Что нужно до запуска
 
 1. **БД.** PostgreSQL с TimescaleDB, схема и роли созданы по `db/README.md` (`init/001_roles_and_extension.sql`, затем
-   миграции `db/migrations/V*.sql` под `ktm_migrator`, пароль роли `ktm_app` задан). Сервис работает под ролью `ktm_app`
-   (`SELECT, INSERT`). Сервис схему сам не создаёт и не мигрирует.
+   пароли ролей `ktm_migrator` и `ktm_app` заданы администратором). `init` - ручной шаг под суперпользователем.
+   Миграции `db/migrations/V*.sql` накатывает контейнер `migrate` при `docker compose up` (п. 3). Сервис работает под ролью
+   `ktm_app` (`SELECT, INSERT`), схему сам не создаёт и не мигрирует.
 2. **Kafka.** Топики созданы заранее (автосоздание выключено): `ktm.events.raw` (9 партиций, хранение 7 суток) и
    `ktm.events.rejected` (3 партиции, 30 суток) - `infra/kafka/README.md`. Если `ktm.events.raw` нет, сервис стартует, но
    `/health/ready` = 503 `no_partitions_assigned` (п. 5).
@@ -107,11 +108,23 @@
 cp .env.example .env        # подставить Kafka, хост и базу БД
 mkdir -p secrets
 printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password
-sudo chown 1654:1654 secrets/ktm_app_password && chmod 0400 secrets/ktm_app_password   # владелец - uid пользователя контейнера
-docker compose up -d --build
+printf '%s' '<пароль ktm_migrator>' > secrets/ktm_migrator_password
+sudo chown 1654:1654 secrets/ktm_app_password secrets/ktm_migrator_password   # владелец - uid пользователя контейнера
+chmod 0400 secrets/ktm_app_password secrets/ktm_migrator_password
+docker compose up -d --build             # сначала migrate (разово), затем data-saver
+docker compose logs migrate              # ход миграции; при ошибке data-saver не стартует
 docker compose ps                        # STATUS должен стать "healthy" (это только liveness, см. ниже)
 docker compose logs -f data-saver
 ```
+
+Миграции: контейнер `migrate` выполняет `db/migrations/V*.sql` под `ktm_migrator` (файлы по возрастанию имени, один сеанс
+`psql` с `ON_ERROR_STOP=1` на файл, на время прогона `pg_advisory_lock`) и завершается; `data-saver` стартует только после
+кода 0. Подключение - те же `DataSaver__Postgres__Host/Port/Database/SslMode`, пользователь всегда `ktm_migrator`, пароль -
+только файл секрета. Повторный запуск безопасен (файлы идемпотентны). Если `docker compose up` завершился ошибкой
+`migrate`: `docker compose logs migrate` показывает файл и ошибку SQL; исправить причину (не правя применённый файл -
+новым `V00N`) и повторить `docker compose up -d`. Отдельный прогон: `docker compose run --rm migrate`. Первый
+неидемпотентный `V`-файл требует пересмотра подхода (ADR-0004, раздел 5). `docker compose up` не защищает от рестарта
+контейнера демоном Docker без `migrate`: схема к этому времени уже накачена.
 
 `secrets/` и `.env` в git и в контекст сборки образа не попадают (`.gitignore`, `.dockerignore`). Файл секрета должен быть
 читаем из контейнера: процесс работает не от root (пользователь `app`, uid 1654), при недоступном файле сервис не стартует
