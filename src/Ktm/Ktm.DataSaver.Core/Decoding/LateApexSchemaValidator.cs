@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using LateApexEarlySpeed.Json.Schema;
 using System.Text.RegularExpressions;
@@ -31,7 +32,7 @@ public sealed partial class LateApexSchemaValidator : ISchemaValidator
     /// <summary>date-time по RFC 3339: полная дата и время, дробная часть любой длины, смещение Z или ±hh:mm.</summary>
     private sealed partial class Rfc3339DateTimeFormat : FormatValidator
     {
-        [GeneratedRegex(@"^(\d{4})-(\d{2})-(\d{2})[Tt]([01]\d|2[0-3]):([0-5]\d):([0-5]\d|60)(\.\d+)?([Zz]|[+-]([01]\d|2[0-3]):[0-5]\d)$", RegexOptions.CultureInvariant)]
+        [GeneratedRegex(@"^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9]|60)(\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$", RegexOptions.CultureInvariant)]
         private static partial Regex Pattern();
 
         public override bool Validate(string content)
@@ -42,11 +43,16 @@ public sealed partial class LateApexSchemaValidator : ISchemaValidator
                 return false;
             }
 
-            var year = int.Parse(m.Groups[1].Value);
-            var month = int.Parse(m.Groups[2].Value);
-            var day = int.Parse(m.Groups[3].Value);
+            if (!TryInt(m.Groups[1].Value, out var year) || !TryInt(m.Groups[2].Value, out var month) || !TryInt(m.Groups[3].Value, out var day))
+            {
+                return false;
+            }
+
             return year >= 1 && month is >= 1 and <= 12 && day >= 1 && day <= DateTime.DaysInMonth(year, month);
         }
+
+        private static bool TryInt(string text, out int value) =>
+            int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value);
     }
 
     public SchemaValidationResult Validate(JsonElement instance)

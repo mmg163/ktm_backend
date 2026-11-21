@@ -1,9 +1,11 @@
+using System.Text.RegularExpressions;
+using Ktm.DataSaver.Infrastructure.Postgres;
 using Microsoft.Extensions.Options;
 
 namespace Ktm.DataSaver;
 
 /// <summary>Сообщение и код выхода при некорректной конфигурации (EX_CONFIG, sysexits.h).</summary>
-internal static class StartupErrors
+internal static partial class StartupErrors
 {
     public const int ConfigExitCode = 78;
 
@@ -34,8 +36,18 @@ internal static class StartupErrors
                 return true;
             case AggregateException aggregate when aggregate.InnerExceptions.Count > 0:
                 return aggregate.InnerExceptions.All(inner => Collect(inner, failures));
+            case InvalidSettingException invalid:
+                failures.Add($"{invalid.Setting} has an invalid value.");
+                return true;
+            case InvalidOperationException binder when BinderPath().Match(binder.Message) is { Success: true } match:
+                // Биндер не смог привести значение к типу: в тексте только путь настройки, значение берётся из внутреннего исключения.
+                failures.Add($"{match.Groups[1].Value.Replace(":", "__", StringComparison.Ordinal)} has an invalid value (wrong type).");
+                return true;
             default:
                 return false;
         }
     }
+
+    [GeneratedRegex(@"(?s)^Failed to convert configuration value .*at '([^']+)' to type")]
+    private static partial Regex BinderPath();
 }

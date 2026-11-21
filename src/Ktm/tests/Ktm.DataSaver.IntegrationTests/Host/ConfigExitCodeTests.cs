@@ -5,6 +5,7 @@ namespace Ktm.DataSaver.IntegrationTests.Host;
 public sealed class ConfigExitCodeTests
 {
     private const string Secret = "top-secret-pw";
+    private const string DbSecret = "db-secret-pw";
 
     private static Dictionary<string, string> ValidBase() => new()
     {
@@ -12,7 +13,7 @@ public sealed class ConfigExitCodeTests
         ["DataSaver__Postgres__Host"] = "127.0.0.1",
         ["DataSaver__Postgres__Database"] = "ktm",
         ["DataSaver__Postgres__Username"] = "ktm_app",
-        ["DataSaver__Postgres__Password"] = "db-secret-pw",
+        ["DataSaver__Postgres__Password"] = DbSecret,
     };
 
     /// <summary>Запуск службы отдельным процессом: из окружения убираются все DataSaver__*, нужные задаются явно.</summary>
@@ -61,6 +62,8 @@ public sealed class ConfigExitCodeTests
     private static void AssertOneLineWithoutStackOrSecrets((int ExitCode, string Stderr, string Stdout) result, params string[] secrets)
     {
         Assert.Equal(78, result.ExitCode);
+        // Пароль БД задан в каждом сценарии и не должен попасть в вывод ни в одном из них.
+        secrets = [.. secrets, DbSecret];
         Assert.Single(result.Stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         Assert.DoesNotContain("   at ", result.Stderr + result.Stdout, StringComparison.Ordinal);
         foreach (var secret in secrets)
@@ -72,11 +75,9 @@ public sealed class ConfigExitCodeTests
     [Fact]
     public async Task InvalidConfiguration_ExitsWith78_AndOneLineWithSettingName_NoStackTraceNoSecrets()
     {
-        var environment = new Dictionary<string, string>
-        {
-            ["DataSaver__Batch__MaxSize"] = "0",
-            ["DataSaver__Kafka__SaslPassword"] = Secret,
-        };
+        var environment = ValidBase();
+        environment["DataSaver__Batch__MaxSize"] = "0";
+        environment["DataSaver__Kafka__SaslPassword"] = Secret;
 
         var result = await RunAsync(environment);
 
@@ -134,5 +135,21 @@ public sealed class ConfigExitCodeTests
         Assert.Contains("DataSaver__Health__LiveStaleSeconds", result.Stderr, StringComparison.Ordinal);
         // Проверяется только подставленный секрет: пароль БД из ValidBase в сообщение не входит по построению.
         AssertOneLineWithoutStackOrSecrets(result);
+    }
+
+    [Theory]
+    [InlineData("DataSaver__Batch__MaxSize")]
+    [InlineData("DataSaver__Health__Port")]
+    [InlineData("DataSaver__Trust__Default")]
+    public async Task NonNumericSetting_ExitsWith78_OneLineNamingSettingWithoutItsValue(string setting)
+    {
+        const string badValue = "abc";
+        var environment = ValidBase();
+        environment[setting] = badValue;
+
+        var result = await RunAsync(environment);
+
+        Assert.Contains(setting, result.Stderr, StringComparison.Ordinal);
+        AssertOneLineWithoutStackOrSecrets(result, badValue);
     }
 }

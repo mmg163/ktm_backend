@@ -179,8 +179,10 @@ public sealed class IngestionLoop(
         try
         {
             var deadLettered = new HashSet<ConsumedMessage>(ReferenceEqualityComparer.Instance);
+            // received_at один на пачку: повторы записи и продолжение после DeadLetter используют то же значение (ADR-0002, D-3).
+            var receivedAt = timeProvider.GetUtcNow();
             if (!await ClassifyStageAsync(raw, results)
-                || !await WriteStageAsync(results, deadLettered)
+                || !await WriteStageAsync(results, deadLettered, receivedAt)
                 || !await PublishStageAsync(results))
             {
                 logger.LogWarning("Shutdown deadline reached before batch of {Size} was finished; offsets are not committed", batch.Count);
@@ -250,7 +252,8 @@ public sealed class IngestionLoop(
             catch (Exception ex)
             {
                 var attempt = Interlocked.Increment(ref _retryCount);
-                logger.LogError(ex, "Pipeline stage failed for batch of {Size}, attempt {Attempt}; batch is retried, not rejected", raw.Count, attempt);
+                // Исключение целиком не логируем: его текст может нести фрагмент тела сообщения (ПДн).
+                logger.LogError("Pipeline stage failed for batch of {Size}: {ErrorType}, attempt {Attempt}; batch is retried, not rejected", raw.Count, ex.GetType().Name, attempt);
                 EnterDegraded();
                 if (!await BackoffWaitAsync())
                 {
@@ -260,7 +263,7 @@ public sealed class IngestionLoop(
         }
     }
 
-    private async Task<bool> WriteStageAsync(List<PipelineResult> results, HashSet<ConsumedMessage> deadLettered)
+    private async Task<bool> WriteStageAsync(List<PipelineResult> results, HashSet<ConsumedMessage> deadLettered, DateTimeOffset receivedAt)
     {
         while (true)
         {
@@ -276,7 +279,7 @@ public sealed class IngestionLoop(
 
             try
             {
-                await store.WriteAsync(items.Select(i => i.Event).ToList(), IoToken);
+                await store.WriteAsync(items.Select(i => i.Event).ToList(), receivedAt, IoToken);
                 // Во время самой записи отметки нет: от ложного loop_stalled защищает валидатор
                 // (LiveStaleSeconds > max(Poll, Connect + 3 * Command, ProducerMessageTimeout);
                 // запись = BeginTransaction + ExecuteNonQuery + Commit, CommandTimeout на каждое обращение).

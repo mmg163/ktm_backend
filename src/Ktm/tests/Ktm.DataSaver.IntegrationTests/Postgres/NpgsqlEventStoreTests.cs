@@ -13,6 +13,8 @@ namespace Ktm.DataSaver.IntegrationTests.Postgres;
 [Collection(PostgresCollection.Name)]
 public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper output)
 {
+    private static readonly DateTimeOffset Now = new(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
+
     private NpgsqlEventStore Store(short trust = 100, params (string, short)[] overrides) =>
         new(db.AppDataSource, new FixedTrustProvider(trust, overrides));
 
@@ -72,7 +74,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
             .ToList();
 
         var stopwatch = Stopwatch.StartNew();
-        var result = await Store(trust: 90, (oneC, 60)).WriteBatchAsync(events, CancellationToken.None);
+        var result = await Store(trust: 90, (oneC, 60)).WriteBatchAsync(events, Now, CancellationToken.None);
         stopwatch.Stop();
         output.WriteLine($"500 events written in {stopwatch.ElapsedMilliseconds} ms (cold pool, single batch)");
 
@@ -115,9 +117,10 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         events.AddRange(events.Take(10)); // 100 сообщений, 10 дублей
         var store = Store();
 
-        var first = await store.WriteBatchAsync(events, CancellationToken.None);
+        var first = await store.WriteBatchAsync(events, Now, CancellationToken.None);
         var snapshot = await ReadEventsAsync(source);
-        var repeat = await store.WriteBatchAsync(events, CancellationToken.None);
+        // Повтор той же пачки приходит с другим моментом получения, но ранее вставленные строки не меняются.
+        var repeat = await store.WriteBatchAsync(events, Now.AddMinutes(5), CancellationToken.None);
 
         Assert.Equal(90, first.EventsInserted);
         Assert.Equal(0, repeat.EventsInserted);
@@ -136,8 +139,8 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         {
             var batch = round == 0 ? events : events.Select(e => e with { SourceEventId = $"r{round}-{e.SourceEventId}" }).ToList();
             var other = round == 0 ? reversed : Enumerable.Reverse(batch).ToList();
-            await Task.WhenAll(Store().WriteBatchAsync(batch, CancellationToken.None),
-                Store().WriteBatchAsync(other, CancellationToken.None));
+            await Task.WhenAll(Store().WriteBatchAsync(batch, Now, CancellationToken.None),
+                Store().WriteBatchAsync(other, Now, CancellationToken.None));
         }
 
         Assert.Equal(1000, (await ReadEventsAsync(source)).Count);
@@ -148,10 +151,10 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
     {
         var source = NewSource();
         var store = Store();
-        await store.WriteBatchAsync([Event(source, "orig", At(0))], CancellationToken.None);
+        await store.WriteBatchAsync([Event(source, "orig", At(0))], Now, CancellationToken.None);
         var before = (await ReadEventsAsync(source)).Single();
 
-        var result = await store.WriteBatchAsync([Correction(source, "fix", At(100), "orig", At(0))], CancellationToken.None);
+        var result = await store.WriteBatchAsync([Correction(source, "fix", At(100), "orig", At(0))], Now, CancellationToken.None);
 
         Assert.Equal(new EventWriteResult(1, 1), result);
         var rows = await ReadEventsAsync(source);
@@ -171,10 +174,10 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var store = Store();
         var correction = Correction(source, "fix", At(100), "orig", At(0), reason: null);
 
-        var first = await store.WriteBatchAsync([correction], CancellationToken.None);
-        var repeat = await store.WriteBatchAsync([correction], CancellationToken.None);
+        var first = await store.WriteBatchAsync([correction], Now, CancellationToken.None);
+        var repeat = await store.WriteBatchAsync([correction], Now, CancellationToken.None);
         // исходное приходит позже: журнал неизменяем, связь не достраивается
-        await store.WriteBatchAsync([Event(source, "orig", At(0))], CancellationToken.None);
+        await store.WriteBatchAsync([Event(source, "orig", At(0))], Now, CancellationToken.None);
 
         Assert.Equal(new EventWriteResult(1, 1), first);
         Assert.Equal(new EventWriteResult(0, 0), repeat);
@@ -193,8 +196,8 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var source = NewSource();
         var store = Store();
 
-        await store.WriteBatchAsync([Event(source, "a", At(0)), Correction(source, "b", At(5), "a", At(0))], CancellationToken.None);
-        await store.WriteBatchAsync([Event(source, "a", At(0))], CancellationToken.None);
+        await store.WriteBatchAsync([Event(source, "a", At(0)), Correction(source, "b", At(5), "a", At(0))], Now, CancellationToken.None);
+        await store.WriteBatchAsync([Event(source, "a", At(0))], Now, CancellationToken.None);
 
         Assert.Equal(2, (await ReadEventsAsync(source)).Count);
     }
@@ -246,11 +249,29 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var tooLongSource = new string('x', 40); // ck_events_source: <= 32 символов
         var batch = new List<ParsedEvent> { Event(source, "ok", At(0)), Event(tooLongSource, "bad", At(1)) };
 
-        var ex = await Assert.ThrowsAsync<PostgresStoreException>(() => Store().WriteBatchAsync(batch, CancellationToken.None));
+        var ex = await Assert.ThrowsAsync<PostgresStoreException>(() => Store().WriteBatchAsync(batch, Now, CancellationToken.None));
 
         Assert.Equal("23514", ex.SqlState);
         Assert.Equal(WriteErrorClass.Data, WriteErrorClassifier.Classify(ex));
         Assert.Empty(await ReadEventsAsync(source)); // транзакция откатилась целиком
+    }
+
+    [Fact]
+    public async Task Number_with_boundary_fraction_accepted_by_decoder_is_accepted_by_postgres()
+    {
+        var id = "num-" + Guid.NewGuid().ToString("N");
+        var fraction = "0." + new string('0', 16382) + "1"; // 16383 цифры дробной части: предел numeric и декодера
+        var template = Event("skud", id, At());
+        var json = template.Body.GetRawText().Replace("\"n\":0", "\"n\":" + fraction).Replace("access.pass", "access_granted");
+        Assert.Contains(fraction, json);
+
+        var decoded = new Ktm.DataSaver.Core.Decoding.EventDecoder().Decode(System.Text.Encoding.UTF8.GetBytes(json));
+        Assert.True(decoded.IsSuccess, decoded.Detail);
+
+        var result = await Store().WriteBatchAsync([decoded.Event!], Now, CancellationToken.None);
+
+        Assert.Equal(1, result.EventsInserted);
+        Assert.Contains((await ReadEventsAsync("skud")), r => r.SourceEventId == id);
     }
 
     [Fact]
@@ -259,7 +280,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var source = NewSource();
         var correction = Correction(source, "fix", At(100), "orig", At(0));
 
-        await Store().WriteBatchAsync([correction], CancellationToken.None);
+        await Store().WriteBatchAsync([correction], Now, CancellationToken.None);
 
         var stored = JsonNode.Parse((await ReadEventsAsync(source)).Single().Payload)!;
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(correction.Body.GetRawText()), stored));
@@ -274,7 +295,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         await cts.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => Store().WriteBatchAsync([Event(NewSource(), "a", At(0))], cts.Token));
+            () => Store().WriteBatchAsync([Event(NewSource(), "a", At(0))], Now, cts.Token));
     }
 
     [Fact]
@@ -283,7 +304,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var source = NewSource();
         var day = new DateTimeOffset(2025, 1, 6, 10, 0, 0, TimeSpan.Zero);
         var store = Store();
-        await store.WriteBatchAsync([Event(source, "old", day)], CancellationToken.None);
+        await store.WriteBatchAsync([Event(source, "old", day)], Now, CancellationToken.None);
 
         await using (var migrator = new NpgsqlConnection(db.MigratorConnectionString))
         {
@@ -299,7 +320,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         }
 
         var result = await store.WriteBatchAsync(
-            [Event(source, "old", day), Event(source, "new", day.AddMinutes(1))], CancellationToken.None);
+            [Event(source, "old", day), Event(source, "new", day.AddMinutes(1))], Now, CancellationToken.None);
 
         Assert.Equal(new EventWriteResult(1, 0), result);
         Assert.Equal(2, (await ReadEventsAsync(source)).Count);
@@ -335,7 +356,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var store = new NpgsqlEventStore(dataSource, new FixedTrustProvider(100));
 
         var ex = await Assert.ThrowsAsync<PostgresStoreException>(
-            () => store.WriteBatchAsync([Event(NewSource(), "a", At(0))], CancellationToken.None));
+            () => store.WriteBatchAsync([Event(NewSource(), "a", At(0))], Now, CancellationToken.None));
 
         Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(ex));
     }

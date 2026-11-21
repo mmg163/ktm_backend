@@ -325,6 +325,58 @@ public class IngestionLoopTests
         Assert.Equal([Next(1, 6)], h.Committer.Commits.Single());
     }
 
+    [Fact]
+    public async Task ReceivedAt_IsTakenOncePerBatch_AndNotRecomputedOnWriteRetries()
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2), Valid(0, 3), Valid(0, 4), Valid(0, 5));
+        h.Store.Fail = call => call <= 2 ? new IOException("connection reset") : null;
+        // Время идёт между попытками: пересчёт на каждой попытке дал бы разные значения.
+        h.Store.OnCall = _ => h.Time.Advance(TimeSpan.FromSeconds(7));
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal(4, h.Store.ReceivedAts.Count);
+        Assert.Single(h.Store.ReceivedAts.Take(3).Distinct());
+        Assert.NotEqual(h.Store.ReceivedAts[0], h.Store.ReceivedAts[3]);
+    }
+
+    private sealed class ThrowWithBodyStage : IIngestionStage
+    {
+        private bool _thrown;
+
+        public IngestionVerdict Evaluate(Ktm.DataSaver.Core.Model.ConsumedMessage message, Ktm.DataSaver.Core.Model.ParsedEvent parsed)
+        {
+            if (_thrown)
+            {
+                return IngestionVerdict.Accept;
+            }
+
+            _thrown = true;
+            throw new InvalidOperationException("bad body: Ivanov Ivan Ivanovich");
+        }
+    }
+
+    [Fact]
+    public async Task PipelineStageException_IsLoggedWithoutMessageTextAndStack_ButStillDegradesAndRetries()
+    {
+        var h = new Harness(3, new ThrowWithBodyStage());
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        var records = h.Logger.Collector.GetSnapshot();
+        Assert.Contains(records, r => r.Level == LogLevel.Error && r.Message.Contains(nameof(InvalidOperationException)));
+        Assert.All(records, r =>
+        {
+            Assert.Null(r.Exception);
+            Assert.DoesNotContain("Ivanov", r.Message);
+        });
+        Assert.Equal(["pause", "write", "resume", "commit"], h.Log);
+    }
+
     private sealed class ThrowOnceStage : IIngestionStage
     {
         private bool _thrown;

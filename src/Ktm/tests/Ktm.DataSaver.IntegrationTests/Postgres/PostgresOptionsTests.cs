@@ -106,7 +106,7 @@ public sealed class PostgresOptionsTests
     [InlineData("DataSaver__Trust__Source__skud", "-1")]
     public void Invalid_trust_value_fails_at_startup_not_at_write(string name, string value)
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<InvalidSettingException>(
             () => new EnvironmentSourceTrustProvider(new Dictionary<string, string?> { [name] = value }));
 
         Assert.Contains(name, ex.Message);

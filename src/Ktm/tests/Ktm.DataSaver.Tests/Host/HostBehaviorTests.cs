@@ -126,7 +126,7 @@ public class HostBehaviorTests
         public int CorrectionsInserted { get; set; }
         public Exception? Error { get; set; }
 
-        public Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken) =>
+        public Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken) =>
             Error is { } error ? Task.FromException<EventWriteResult>(error) : Task.FromResult(new EventWriteResult(Inserted, CorrectionsInserted));
     }
 
@@ -164,14 +164,14 @@ public class HostBehaviorTests
         var writer = new FakeBatchWriter { Inserted = 90, CorrectionsInserted = 2 };
         var store = new MeteredEventStore(writer, new DataSaverMetrics(meter));
 
-        await store.WriteAsync(Events(100), default);
+        await store.WriteAsync(Events(100), DateTimeOffset.UnixEpoch, default);
 
         Assert.Equal(90, collector.Totals["ktm.datasaver.events.written"]);
         Assert.Equal(10, collector.Totals["ktm.datasaver.events.duplicates"]);
         Assert.Equal(2, collector.Totals["ktm.datasaver.corrections.written"]);
 
         writer.Error = new IOException("down");
-        await Assert.ThrowsAsync<IOException>(async () => await store.WriteAsync(Events(5), default));
+        await Assert.ThrowsAsync<IOException>(async () => await store.WriteAsync(Events(5), DateTimeOffset.UnixEpoch, default));
         Assert.Equal(1, collector.ByTag["ktm.datasaver.retries[write]"]);
         Assert.Equal(90, collector.Totals["ktm.datasaver.events.written"]);
     }

@@ -12,13 +12,13 @@ public sealed class MeteredEventStore(IBatchWriter inner, DataSaverMetrics metri
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
-    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken)
+    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken)
     {
         var started = _time.GetTimestamp();
         EventWriteResult result;
         try
         {
-            result = await inner.WriteBatchAsync(events, cancellationToken);
+            result = await inner.WriteBatchAsync(events, receivedAt, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
