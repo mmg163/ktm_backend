@@ -200,8 +200,12 @@ internal sealed class FakeFailureHandler : IWriteFailureHandler
 
     public bool Hang { get; set; }
 
+    /// <summary>Сколько раз цикл обратился к порту C6.</summary>
+    public int Calls { get; private set; }
+
     public async ValueTask<WriteFailureDecision> HandleAsync(WriteFailureContext context, CancellationToken cancellationToken)
     {
+        Calls++;
         if (Hang)
         {
             await Task.Delay(Timeout.Infinite, cancellationToken);

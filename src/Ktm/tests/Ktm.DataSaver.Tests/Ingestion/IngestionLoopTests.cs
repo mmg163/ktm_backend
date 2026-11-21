@@ -1,7 +1,9 @@
 using Ktm.DataSaver.Core.Batching;
+using Ktm.DataSaver.Core.Decoding;
 using Ktm.DataSaver.Core.Ingestion;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Core.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using static Ktm.DataSaver.Tests.Ingestion.Harness;
@@ -66,6 +68,8 @@ public class IngestionLoopTests
         Assert.Equal(IngestionState.Running, h.Loop.State);
         Assert.Equal(0, h.Loop.RetryCount);
         Assert.Equal([Next(0, 2), Next(1, 1)], h.Committer.Commits.Single().OrderBy(o => o.Partition));
+        // Порт C6 решает судьбу только при ошибке данных; временная ошибка его не касается.
+        Assert.Equal(0, h.Handler.Calls);
     }
 
     [Fact]
@@ -114,6 +118,60 @@ public class IngestionLoopTests
 
         Assert.Equal(["e-0-0", "e-0-2"], h.Store.Writes[1]);
         Assert.Equal([Next(0, 3)], h.Committer.Commits.Single());
+    }
+
+    [Fact]
+    public async Task DataError_WithBlockingStub_RetriesSameBatch_StaysDegraded_AndCommitsNothing()
+    {
+        var h = new Harness(batchSize: 3);
+        var blocking = new BlockingWriteFailureHandler();
+        var loop = new IngestionLoop(
+            h.Source,
+            new IngestionPipeline(new FormatStage(new EventDecoder()), []),
+            h.Store,
+            h.Publisher,
+            h.Committer,
+            blocking,
+            h.Notifier,
+            new Batcher<ConsumedMessage>(3, TimeSpan.FromHours(1), h.Time),
+            new BackoffPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 2, 0, () => 0.5),
+            new IngestionLoopOptions(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30)),
+            h.Time,
+            h.Logger);
+        h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
+        h.Store.Fail = _ => new FakeDbException("23514");
+        var stateAtLastWrite = IngestionState.Running;
+        h.Store.OnCall = call =>
+        {
+            stateAtLastWrite = loop.State;
+            if (call >= 3) h.Stop.Cancel();
+        };
+
+        // Паузы между повторами ждут таймера: часы в тесте двигает «насос».
+        using var done = new CancellationTokenSource();
+        var pump = Task.Run(async () =>
+        {
+            while (!done.IsCancellationRequested)
+            {
+                h.Time.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(1);
+            }
+        });
+
+        try
+        {
+            await loop.RunAsync(h.Stop.Token).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            await done.CancelAsync();
+            await pump;
+        }
+
+        Assert.True(h.Store.Writes.Count >= 3);
+        Assert.All(h.Store.Writes, w => Assert.Equal(["e-0-0", "e-0-1", "e-0-2"], w));
+        Assert.Equal(IngestionState.Degraded, stateAtLastWrite);
+        Assert.Empty(h.Committer.Commits);
     }
 
     [Theory]

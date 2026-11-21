@@ -172,6 +172,8 @@ public sealed class IngestionAcceptanceTests(KafkaFixture kafka, PostgresFixture
             Assert.False(string.IsNullOrWhiteSpace(record.Headers["ktm-reject-detail"]));
             Assert.Equal(run.RawTopic, record.Headers["ktm-source-topic"]);
             Assert.Equal("0", record.Headers["ktm-source-partition"]);
+            // Отбраковка форматом (не правилом) не несёт идентификатор правила.
+            Assert.DoesNotContain("ktm-reject-rule-id", record.Headers.Keys);
         }
 
         Assert.Equal(bad.Length, app.Counters["ktm.datasaver.messages.rejected[" + RejectReasons.MalformedJson + "]"]
