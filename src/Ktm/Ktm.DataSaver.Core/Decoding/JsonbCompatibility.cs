@@ -12,6 +12,7 @@ internal static class JsonbCompatibility
 {
     private const long MaxIntegerDigits = 131072;
     private const long MaxScale = 16383;
+    private const long MaxExponent = 1_073_741_823;
     private const long ExponentClamp = 1_000_000_000_000;
 
     /// <summary>Возвращает пояснение первой найденной проблемы или <c>null</c>, если тело совместимо с jsonb.</summary>
@@ -113,14 +114,12 @@ internal static class JsonbCompatibility
 
         var digits = integerPart + fraction;
         var leadingZeros = digits.Length - digits.TrimStart('0').Length;
-        if (leadingZeros == digits.Length)
-        {
-            return null; // ноль в любой степени
-        }
 
-        var integerDigits = integerPart.Length - leadingZeros + exponent;
+        // Ноль не освобождается от проверки: значащих цифр нет (integerDigits = 0), но масштаб и экспонента
+        // проверяются, как у любого числа (PostgreSQL 16 отвергает, например, 0e2000000000 и 0e-16384).
+        var integerDigits = leadingZeros == digits.Length ? 0 : integerPart.Length - leadingZeros + exponent;
         var scale = fraction.Length - exponent;
-        return integerDigits > MaxIntegerDigits || scale > MaxScale
+        return Math.Abs(exponent) > MaxExponent || integerDigits > MaxIntegerDigits || scale > MaxScale
             ? "Message contains a number outside the PostgreSQL numeric range."
             : null;
     }

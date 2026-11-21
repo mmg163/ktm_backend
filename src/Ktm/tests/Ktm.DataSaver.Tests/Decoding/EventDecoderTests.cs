@@ -66,6 +66,9 @@ public class EventDecoderTests
         Assert.Equal("48213377-corr-1", parsed.Key.SourceEventId);
     }
 
+    private static string ToDigits(string value, int zero) =>
+        string.Concat(value.Select(c => char.IsAsciiDigit(c) ? (char)(zero + (c - '0')) : c));
+
     public static TheoryData<string, byte[], string> InvalidCases() => new()
     {
         { "not json", EventSamples.Bytes("{ this is not json"), RejectReasons.MalformedJson },
@@ -76,8 +79,8 @@ public class EventDecoderTests
         { "schemaVersion string", EventSamples.SkudWith(o => o["schemaVersion"] = "1"), RejectReasons.UnknownSchemaVersion },
         { "schemaVersion absent", EventSamples.SkudWith(o => o.Remove("schemaVersion")), RejectReasons.UnknownSchemaVersion },
         { "occurredAt with offset", EventSamples.SkudWith(o => o["occurredAt"] = "2026-11-19T07:58:12+03:00"), RejectReasons.InvalidSchema },
-        { "occurredAt arabic-indic digits", EventSamples.SkudWith(o => o["occurredAt"] = "٢٠٢٦-11-19T04:58:12Z"), RejectReasons.InvalidSchema },
-        { "occurredAt fullwidth digits", EventSamples.SkudWith(o => o["occurredAt"] = "2026-11-19T04:58:12Z".Replace('2', '２')), RejectReasons.InvalidSchema },
+        { "occurredAt arabic-indic digits", EventSamples.SkudWith(o => o["occurredAt"] = ToDigits("2026-11-19T04:58:12Z", 0x0660)), RejectReasons.InvalidSchema },
+        { "occurredAt fullwidth digits", EventSamples.SkudWith(o => o["occurredAt"] = ToDigits("2026-11-19T04:58:12Z", 0xFF10)), RejectReasons.InvalidSchema },
         { "occurredAt not a date", EventSamples.SkudWith(o => o["occurredAt"] = "2026-13-45T04:58:12Z"), RejectReasons.InvalidSchema },
         { "deviceId absent for skud", EventSamples.SkudWith(o => o.Remove("deviceId")), RejectReasons.InvalidSchema },
         { "eventType uppercase", EventSamples.SkudWith(o => o["eventType"] = "Access_Granted"), RejectReasons.InvalidSchema },
@@ -95,6 +98,15 @@ public class EventDecoderTests
         Assert.False(result.IsSuccess, caseName);
         Assert.Equal(expectedReason, result.Reason);
         Assert.False(string.IsNullOrWhiteSpace(result.Detail), caseName);
+    }
+
+    [Fact]
+    public void Decode_OccurredAtWithTrailingNewline_IsInvalidSchemaOnOccurredAt()
+    {
+        var result = _decoder.Decode(EventSamples.SkudWith(o => o["occurredAt"] = "2026-11-19T04:58:12Z\n"));
+
+        Assert.Equal(RejectReasons.InvalidSchema, result.Reason);
+        Assert.Contains("/occurredAt", result.Detail);
     }
 
     [Fact]

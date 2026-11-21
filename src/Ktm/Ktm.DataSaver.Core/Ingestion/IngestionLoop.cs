@@ -340,20 +340,26 @@ public sealed class IngestionLoop(
     /// <summary>
     /// Лог сбоя записи (6.5): общая запись (класс, попытка, размер пачки), затем запись на каждую группу (Topic, Partition)
     /// принятых событий с первым offset, последним offset, числом и происхождением первого события. Тел сообщений нет.
-    /// Для класса «данные» исключение в лог не передаётся (текст может содержать значения из строки): тип и SQLSTATE.
+    /// Исключение в лог не передаётся (текст может содержать значения из строки). Ошибка БД: SQLSTATE, ограничение, таблица;
+    /// сетевые типы (DbException, SocketException, IOException, TimeoutException): цепочка типов и код сокета; прочие: только тип.
     /// </summary>
     private void LogWriteFailure(Exception ex, WriteErrorClass errorClass, int attempt, IReadOnlyList<WriteItem> items)
     {
         var level = errorClass == WriteErrorClass.Transient ? LogLevel.Warning : LogLevel.Error;
-        if (errorClass == WriteErrorClass.Data)
+        // Исключение целиком не логируется ни для какого класса: Message драйвера может содержать значения из строки.
+        var sqlState = WriteErrorClassifier.FindSqlState(ex);
+        var location = FindLocation(ex);
+        string? chain = null;
+        string? code = null;
+        if (string.IsNullOrEmpty(sqlState) && IsNetworkType(ex))
         {
-            logger.Log(level, "Batch write failed: {ErrorClass}, {ErrorType}, {SqlState}, attempt {Attempt}, batch size {BatchSize}",
-                errorClass, ex.GetType().Name, WriteErrorClassifier.FindSqlState(ex), attempt, items.Count);
+            chain = string.Join(" > ", EnumerateChain(ex).Select(e => e.GetType().Name));
+            code = FindNetworkCode(ex);
         }
-        else
-        {
-            logger.Log(level, ex, "Batch write failed: {ErrorClass}, attempt {Attempt}, batch size {BatchSize}", errorClass, attempt, items.Count);
-        }
+
+        logger.Log(level,
+            "Batch write failed: {ErrorClass}, {ErrorType}, {SqlState}, {ConstraintName}, {TableName}, {ErrorChain}, {ErrorCode}, attempt {Attempt}, batch size {BatchSize}",
+            errorClass, ex.GetType().Name, sqlState, location?.ConstraintName, location?.TableName, chain, code, attempt, items.Count);
 
         foreach (var group in items.GroupBy(i => (i.Message.Topic, i.Message.Partition)))
         {
@@ -364,6 +370,33 @@ public sealed class IngestionLoop(
                 group.Key.Topic, group.Key.Partition, first.Message.Offset, ordered[^1].Message.Offset, ordered.Count,
                 first.Event.Source, first.Event.SourceEventId);
         }
+    }
+
+    private static IEnumerable<Exception> EnumerateChain(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            yield return current;
+        }
+    }
+
+    private static IDbErrorLocation? FindLocation(Exception ex) => EnumerateChain(ex).OfType<IDbErrorLocation>().FirstOrDefault();
+
+    /// <summary>Типы, текст которых (хост, код) нужен для диагностики; остальные логируются только по типу. DbException покрывает NpgsqlException.</summary>
+    private static bool IsNetworkType(Exception ex) =>
+        ex is System.Data.Common.DbException or System.Net.Sockets.SocketException or IOException or TimeoutException or ISqlStateError;
+
+    private static string? FindNetworkCode(Exception ex)
+    {
+        foreach (var current in EnumerateChain(ex))
+        {
+            if (current is System.Net.Sockets.SocketException socket)
+            {
+                return $"{socket.SocketErrorCode} ({socket.ErrorCode})";
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
