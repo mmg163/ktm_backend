@@ -91,13 +91,17 @@ db/README.md                            порядок применения, к�
 - `data-saver` стартует после `migrate` (`depends_on: condition: service_completed_successfully`) и остаётся под `ktm_app`
   без DDL.
 - Скрипт: файлы `V*.sql` по возрастанию имени; один сеанс `psql` на файл с `-v ON_ERROR_STOP=1`; на весь прогон
-  `pg_advisory_lock` в отдельном сеансе-держателе (метакоманды `psql` - только в обёртке, в `V`-файлах по-прежнему нет); при
+  `pg_advisory_lock` (ключ `hashtextextended('ktm:schema-migration', 0)`; сначала `pg_try_advisory_lock`, при занятости -
+  ожидание под `lock_timeout`, живость проверяется запросом) в отдельном сеансе-держателе (метакоманды `psql` - только в обёртке, в `V`-файлах по-прежнему нет); при
   ошибке - ненулевой код, сервис не стартует, причина в `docker compose logs migrate`.
 - Пароль `ktm_migrator` - только файл Docker secret `secrets/ktm_migrator_password` (`chown 1654:1654`, `0400`, как у
   `ktm_app`); в `.env`, образ сервиса, argv и окружение не попадает (скрипт строит `PGPASSFILE` в tmpfs). Хост, порт, база и
   `SslMode` (по умолчанию `Require`) - те же переменные `DataSaver__Postgres__*`, пользователь всегда `ktm_migrator`.
 - Не автоматизируется и остаётся ручным шагом администратора под суперпользователем: `db/init`, роли, расширение
   `timescaledb`, схема `ktm`, пароли ролей.
+- Имена файлов `V<1-9 цифр>__<смысл>.sql` (ASCII), порядок по номеру обязан совпадать с порядком по имени (нужны
+  ведущие нули: `V002`, `V010`). Образ `postgres:16.16-alpine3.24`. Коды выхода: 1 - SQL, состав, подключение; 2 -
+  конфигурация; 3 - таймаут блокировки, потеря сеанса.
 - Подробности и проверки - `openspec/changes/add-data-saver-migrate-job` (design, spec, tasks).
 
 ### Альтернативы
