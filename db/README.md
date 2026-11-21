@@ -43,14 +43,15 @@ psql -v ON_ERROR_STOP=1 -U postgres -d ktm_revisor -f db/init/001_roles_and_exte
 
 ```bash
 cd deploy/data-saver
-printf '%s' '<пароль ktm_migrator>' > secrets/ktm_migrator_password
+umask 077
+read -rs -p 'пароль ktm_migrator: ' P && printf '%s' "$P" > secrets/ktm_migrator_password; unset P; echo   # не передавать пароль аргументом команды
 sudo chown 1654:1654 secrets/ktm_migrator_password && chmod 0400 secrets/ktm_migrator_password
 docker compose up -d            # migrate -> data-saver
 docker compose logs migrate     # ход и ошибки миграции
 docker compose run --rm migrate # отдельный (повторный) прогон; безопасен, файлы идемпотентны
 ```
 
-Что делает скрипт: файлы `V<число>__<смысл>.sql` по возрастанию имени (номера уникальны и с ведущими нулями: `V2` и `V10` отвергаются как неоднозначные; пустой каталог - ошибка); один сеанс `psql -v ON_ERROR_STOP=1` на файл; на весь прогон удерживается
+Что делает скрипт: файлы `V<число>__<смысл>.sql` по возрастанию имени (номера не повторяются, порядок имён должен совпадать с числовым: одиночный `V2` допустим, а `V2` вместе с `V10` отвергаются - нужны ведущие нули; строки с метакомандами psql (начинаются с `\`) отвергаются; пустой каталог - ошибка); один сеанс `psql -v ON_ERROR_STOP=1` на файл; на весь прогон удерживается
 `pg_advisory_lock` (параллельный запуск ждёт); при первой ошибке - ненулевой код, сервис не стартует. Пароль читается
 только из файла секрета и не попадает в `.env`, argv и лог. Хост, порт, база и `SslMode` берутся из
 `DataSaver__Postgres__*` (`.env`), пользователь всегда `ktm_migrator`.

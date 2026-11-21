@@ -11,7 +11,7 @@ namespace Ktm.DataSaver.IntegrationTests.Postgres;
 /// <summary>Контейнер TimescaleDB в общей сети с роботом миграций: роли и пароль есть, миграций нет (их накатывает скрипт).</summary>
 public sealed class MigrateScriptFixture : IAsyncLifetime
 {
-    // Образ клиента - тот же тег, что у сервиса migrate в deploy/data-saver/compose.yml.
+    // Образ клиента - тот же тег, что у сервиса migrate в deploy/data-saver/compose.yml: при смене тега менять в обоих местах.
     public const string ClientImage = "postgres:16.16-alpine3.24";
 
     // Пароль со спецсимволами: ':' и '\' требуют экранирования в .pgpass, пробел проверяет отсутствие обрезки.
@@ -51,7 +51,7 @@ public sealed class MigrateScriptFixture : IAsyncLifetime
         return name;
     }
 
-    /// <summary>Запуск migrate.sh в контейнере как в compose: uid 1654, каталоги и секрет только на чтение.</summary>
+    /// <summary>Запуск migrate.sh в контейнере с uid 1654, каталогами и секретом только на чтение (без read_only/tmpfs, как задано в compose).</summary>
     public async Task<(long ExitCode, string Output)> RunMigrateAsync(string database, string migrationsDirectory)
     {
         var secretDirectory = Directory.CreateTempSubdirectory("migrate-secret-");
@@ -151,6 +151,28 @@ public sealed class MigrateScriptTests(MigrateScriptFixture fixture) : IClassFix
             Assert.Contains("syntax error", result.Output);
             Assert.DoesNotContain(MigrateScriptFixture.Password, result.Output);
             Assert.True(await fixture.TableExistsAsync(database, "ktm.first_ok"));
+            Assert.False(await fixture.TableExistsAsync(database, "ktm.must_not_exist"));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task File_with_psql_meta_command_is_rejected_before_anything_is_applied()
+    {
+        var database = await fixture.CreateDatabaseAsync();
+        var directory = Directory.CreateTempSubdirectory("migrate-meta-");
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "V001__ok.sql"), "CREATE TABLE ktm.must_not_exist (a int);");
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "V002__meta.sql"), "SELECT 1;\n  \\! echo pwned\n");
+
+            var result = await fixture.RunMigrateAsync(database, directory.FullName);
+
+            Assert.Equal(1, result.ExitCode);
+            Assert.Contains("V002__meta.sql", result.Output);
             Assert.False(await fixture.TableExistsAsync(database, "ktm.must_not_exist"));
         }
         finally

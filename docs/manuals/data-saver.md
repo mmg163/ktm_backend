@@ -107,8 +107,10 @@
 ```bash
 cp .env.example .env        # подставить Kafka, хост и базу БД
 mkdir -p secrets
-printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password
-printf '%s' '<пароль ktm_migrator>' > secrets/ktm_migrator_password
+umask 077
+# пароль вводится скрыто; read и printf - встроенные команды bash, пароль не попадает в argv и историю
+read -rs -p 'пароль ktm_app: ' P && printf '%s' "$P" > secrets/ktm_app_password; unset P; echo
+read -rs -p 'пароль ktm_migrator: ' P && printf '%s' "$P" > secrets/ktm_migrator_password; unset P; echo
 sudo chown 1654:1654 secrets/ktm_app_password secrets/ktm_migrator_password   # владелец - uid пользователя контейнера
 chmod 0400 secrets/ktm_app_password secrets/ktm_migrator_password
 docker compose up -d --build             # сначала migrate (разово), затем data-saver
@@ -119,8 +121,8 @@ docker compose logs -f data-saver
 
 Миграции: контейнер `migrate` (образ `postgres:16.16-alpine3.24`, около 420 МБ на диске; скрипт `deploy/data-saver/migrate/migrate.sh`)
 выполняет `db/migrations/V*.sql` под `ktm_migrator` и завершается; `data-saver` стартует только после кода 0. Файлы идут по
-возрастанию имени (имя вида `V<число>__<смысл>.sql`; номера уникальны, а их числовой порядок совпадает с порядком имён, поэтому
-номера пишутся с ведущими нулями), один сеанс `psql` с `ON_ERROR_STOP=1` на файл; на время прогона удерживается
+возрастанию имени (имя вида `V<число>__<смысл>.sql`; номера не повторяются, а порядок имён совпадает с числовым: одиночный `V2` допустим, `V2` вместе с `V10` отвергается, поэтому
+при росте числа цифр номера пишутся с ведущими нулями; строки с метакомандами psql (начинаются с `\`) отвергаются), один сеанс `psql` с `ON_ERROR_STOP=1` на файл; на время прогона удерживается
 `pg_advisory_lock` (второй одновременный запуск ждёт до `MIGRATE_LOCK_TIMEOUT_SECONDS`, по умолчанию 120 с). Подключение - те же
 `DataSaver__Postgres__Host/Port/Database/SslMode` (по умолчанию `Require`), пользователь всегда `ktm_migrator`, пароль - только
 файл секрета `ktm_migrator_password` (подключён только к `migrate`, в `data-saver` его нет). Повторный запуск безопасен
@@ -134,7 +136,7 @@ docker compose logs -f data-saver
 `docker compose logs migrate` показывает строку `apply <файл>` и ошибку `psql`. Исправить причину (применённый файл не правится -
 новый `V00N`) и повторить `docker compose up -d`. Отдельный прогон: `docker compose run --rm migrate`.
 
-Повторный `docker compose up -d` при уже запущенном стеке (проверено на Docker Compose v2): завершённый контейнер `migrate`
+Повторный `docker compose up -d` при уже запущенном стеке (проверено на Docker Compose v5.7.0): завершённый контейнер `migrate`
 запускается заново (прогон идемпотентен, код 0), запущенный `data-saver` не пересоздаётся и не перезапускается, если его
 конфигурация не менялась. Первый неидемпотентный `V`-файл требует пересмотра подхода (ADR-0004, раздел 5). `depends_on` не
 действует при перезапуске контейнера демоном Docker (`restart: unless-stopped` после перезагрузки хоста): `data-saver` поднимется
