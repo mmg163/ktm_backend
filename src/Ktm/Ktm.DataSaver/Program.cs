@@ -12,7 +12,8 @@ try
     app.Services.GetRequiredService<IStartupValidator>().Validate();
     app.MapDataSaverHealth();
     await app.RunAsync();
-    return 0;
+    // Значение из Main перекрывает Environment.ExitCode: без этого коды 70 и 1 от HostProcessTerminator терялись бы (стали 0).
+    return Environment.ExitCode;
 }
 catch (Exception ex) when (StartupErrors.TryDescribe(ex, out var description))
 {

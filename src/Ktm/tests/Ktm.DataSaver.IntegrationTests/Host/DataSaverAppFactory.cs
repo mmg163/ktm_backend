@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Ktm.DataSaver.IntegrationTests.Host;
@@ -40,6 +41,10 @@ internal sealed class DataSaverAppFactory(Dictionary<string, string?> settings, 
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Консольный и EventLog-провайдеры (на Windows их добавляет WebApplication.CreateBuilder) в тестах не нужны: логи
+        // перехватывает FakeLogCollector, а EventLog уничтожается вместе с host, и запоздалая запись из ещё работающего
+        // BackgroundService (остановка по таймауту при зависшем commit) падает с ObjectDisposedException.
+        builder.ConfigureLogging(logging => logging.ClearProviders());
         builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings));
         if (configureServices is not null) builder.ConfigureTestServices(configureServices);
     }

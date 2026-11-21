@@ -274,7 +274,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 |---|---|
 | `0` | штатная остановка по SIGTERM |
 | `70` | фатальная ошибка клиента Kafka (`Error.IsFatal`): ретраи не помогают, процесс завершается после штатной остановки цикла; перед этим `/health/live` отвечает 503 `consumer_fatal_error`. Выход процесса перезапускает `restart: unless-stopped` |
-| `1` | ошибка цикла приёма, перехваченная и залогированная (`DataSaverWorker.cs:39-44`): лог `Critical` `Ingestion loop failed; the process is terminating`, затем процесс завершается этим кодом |
+| `1` | ошибка цикла приёма, перехваченная и залогированная (`DataSaverWorker.cs`, `catch (Exception)` в `ExecuteAsync`): лог `Critical` `Ingestion loop failed; the process is terminating`, затем процесс завершается этим кодом |
 | `78` | ошибка конфигурации (`EX_CONFIG`): одна строка в stderr с именем настройки (например `DataSaver__Kafka__BootstrapServers is required.`), без стек-трейса и без значений секретов. Рестарт её не лечит: исправьте настройки; при `restart: unless-stopped` контейнер будет перезапускаться, пока их не исправят |
 
 При любом ненулевом выходе сначала смотрите лог последних строк `Critical` перед завершением.
