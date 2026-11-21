@@ -318,3 +318,17 @@ internal sealed class LeakyDbException(string message, string sqlState) : Except
 {
     public string? SqlState { get; } = sqlState;
 }
+
+/// <summary>Аналог PostgresException: SQLSTATE и объект БД, плюс текст с «секретом» значения строки.</summary>
+internal sealed class LeakyDbLocationException(string message, string sqlState, string constraint, string table)
+    : Exception(message), ISqlStateError, IDbErrorLocation
+{
+    public string? SqlState { get; } = sqlState;
+
+    public string? ConstraintName { get; } = constraint;
+
+    public string? TableName { get; } = table;
+}
+
+/// <summary>Тип вне списка допустимых для логирования: «тело» в Message.</summary>
+internal sealed class ForeignWriterException(string message) : Exception(message);

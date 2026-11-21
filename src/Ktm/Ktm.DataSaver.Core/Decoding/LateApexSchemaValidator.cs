@@ -32,7 +32,7 @@ public sealed partial class LateApexSchemaValidator : ISchemaValidator
     /// <summary>date-time по RFC 3339: полная дата и время, дробная часть любой длины, смещение Z или ±hh:mm.</summary>
     private sealed partial class Rfc3339DateTimeFormat : FormatValidator
     {
-        [GeneratedRegex(@"^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9]|60)(\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$", RegexOptions.CultureInvariant)]
+        [GeneratedRegex(@"^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9]|60)(\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])\z", RegexOptions.CultureInvariant)]
         private static partial Regex Pattern();
 
         public override bool Validate(string content)

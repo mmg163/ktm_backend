@@ -61,6 +61,10 @@ public class EventDecoderJsonbCompatibilityTests
     [InlineData("1e-16384")]
     [InlineData("1e-1000000000")]
     [InlineData("1e99999999999999999999999")]
+    [InlineData("0e2000000000")]
+    [InlineData("0.0e-2000000000")]
+    [InlineData("0e-16384")]
+    [InlineData("0.0E-1000000000")]
     public void Decode_NumberOutsideNumericRange_IsInvalidSchema(string number)
     {
         var result = _decoder.Decode(WithPayload($$"""{"values":[1,{"n":{{number}}}]}"""));
@@ -75,8 +79,8 @@ public class EventDecoderJsonbCompatibilityTests
     [InlineData("1e-16383")]
     [InlineData("1.5e300")]
     [InlineData("-2.5E-10")]
-    [InlineData("0e1000000000")]
-    [InlineData("0.0E-1000000000")]
+    [InlineData("0e1073741823")]
+    [InlineData("0e-16383")]
     [InlineData("123456789012345678901234567890")]
     public void Decode_NumberInsideNumericRange_IsAccepted(string number)
     {
@@ -92,12 +96,14 @@ public class EventDecoderJsonbCompatibilityTests
 
         var over = _decoder.Decode(WithPayload($$"""{"n":{{Fraction(16384)}}}"""));
         var edge = _decoder.Decode(WithPayload($$"""{"n":{{Fraction(16383)}}}"""));
-        var zero = _decoder.Decode(WithPayload($$"""{"n":0.{{new string('0', 20000)}}}"""));
+        var zeroOver = _decoder.Decode(WithPayload($$"""{"n":0.{{new string('0', 16384)}}}"""));
+        var zeroEdge = _decoder.Decode(WithPayload($$"""{"n":0.{{new string('0', 16383)}}}"""));
 
         Assert.Equal(RejectReasons.InvalidSchema, over.Reason);
         Assert.Contains("numeric range", over.Detail);
         Assert.True(edge.IsSuccess, edge.Detail);
-        Assert.True(zero.IsSuccess, zero.Detail);
+        Assert.Equal(RejectReasons.InvalidSchema, zeroOver.Reason);
+        Assert.True(zeroEdge.IsSuccess, zeroEdge.Detail);
     }
 
     [Fact]

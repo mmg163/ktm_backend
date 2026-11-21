@@ -275,6 +275,56 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
     }
 
     [Fact]
+    public async Task Decoder_verdict_on_boundary_numbers_matches_postgres_jsonb_outcome()
+    {
+        var zeros = (int n) => new string('0', n);
+        string[] numbers =
+        [
+            // принимаются
+            "0." + zeros(16383), "0." + zeros(16382) + "1", "0e1073741823", "0e-16383", "0.0e-16382", "1e131071", "1e-16383", "-0e5",
+            // отвергаются
+            "0." + zeros(16384), "0." + zeros(20000), "0e2000000000", "0e1073741824", "0.0e-2000000000", "0e-16384", "1e131072",
+            "1e-16384", "0." + zeros(16382) + "1e-1",
+        ];
+        var template = Event("skud", "num-boundary", At());
+        var decoder = new Ktm.DataSaver.Core.Decoding.EventDecoder();
+        var mismatches = new List<string>();
+        var accepted = 0;
+        var rejected = 0;
+
+        await using var connection = await db.AppDataSource.OpenConnectionAsync();
+        foreach (var number in numbers)
+        {
+            var json = template.Body.GetRawText().Replace("\"n\":0", "\"n\":" + number).Replace("access.pass", "access_granted");
+            Assert.Contains("\"n\":" + number, json);
+            var decoderAccepts = decoder.Decode(System.Text.Encoding.UTF8.GetBytes(json)).IsSuccess;
+
+            bool postgresAccepts;
+            try
+            {
+                await using var command = new NpgsqlCommand("SELECT @body::jsonb", connection);
+                command.Parameters.AddWithValue("body", NpgsqlTypes.NpgsqlDbType.Text, json);
+                await command.ExecuteScalarAsync();
+                postgresAccepts = true;
+            }
+            catch (PostgresException ex) when (ex.SqlState == "22003")
+            {
+                postgresAccepts = false;
+            }
+
+            if (decoderAccepts != postgresAccepts)
+            {
+                mismatches.Add($"{(number.Length > 40 ? number[..40] + "..." + number.Length : number)}: decoder={decoderAccepts}, postgres={postgresAccepts}");
+            }
+
+            _ = postgresAccepts ? accepted++ : rejected++;
+        }
+
+        Assert.Empty(mismatches);
+        Assert.True(accepted > 0 && rejected > 0);
+    }
+
+    [Fact]
     public async Task Correction_body_keeps_correction_block_and_unknown_fields()
     {
         var source = NewSource();

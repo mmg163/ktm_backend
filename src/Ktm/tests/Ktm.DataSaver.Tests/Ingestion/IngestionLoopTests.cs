@@ -540,7 +540,8 @@ public class IngestionLoopTests
 
         var records = h.Logger.Collector.GetSnapshot().Where(r => r.Level == LogLevel.Warning && Fields(r).ContainsKey("BatchSize")).ToList();
         var main = Assert.Single(records);
-        Assert.IsType<IOException>(main.Exception);
+        Assert.Null(main.Exception);
+        Assert.Equal("IOException", Fields(main)["ErrorChain"]);
         Assert.Equal(("1", "3"), (Fields(main)["Attempt"], Fields(main)["BatchSize"]));
 
         var groups = h.Logger.Collector.GetSnapshot().Where(r => Fields(r).ContainsKey("LastOffset")).OrderBy(r => Fields(r)["Partition"]).ToList();
@@ -591,5 +592,61 @@ public class IngestionLoopTests
         await h.RunAsync();
 
         Assert.Equal([new EventOrigin("skud", "e-0-0"), null], h.Publisher.Origins);
+    }
+
+    private static async Task<IReadOnlyList<FakeLogRecord>> RunWithWriteFailure(Exception failure)
+    {
+        var h = new Harness();
+        h.Source.Enqueue(Valid(0, 0));
+        h.Store.Fail = call => call == 1 ? failure : null;
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        return h.Logger.Collector.GetSnapshot();
+    }
+
+    [Fact]
+    public async Task TransientWriteFailure_OfForeignType_LogsOnlyTypeNotMessageOrStack()
+    {
+        var records = await RunWithWriteFailure(new ForeignWriterException("Failing row: card=0012345678 ФИО Иванов"));
+
+        var failure = Assert.Single(records, r => Fields(r).ContainsKey("ErrorType"));
+        Assert.Equal("ForeignWriterException", Fields(failure)["ErrorType"]);
+        Assert.Null(Fields(failure)["ErrorChain"]);
+        Assert.All(records, r =>
+        {
+            Assert.Null(r.Exception);
+            Assert.DoesNotContain("Иванов", r.Message);
+            Assert.All(r.StructuredState!, p => Assert.DoesNotContain("0012345678", p.Value ?? string.Empty));
+        });
+    }
+
+    [Fact]
+    public async Task FatalConfigWriteFailure_OfDbError_LogsSqlStateConstraintAndTableWithoutMessage()
+    {
+        var records = await RunWithWriteFailure(new LeakyDbLocationException("Detail: Key (card)=(0012345678) Иванов", "28P01", "ck_events_source", "events"));
+
+        var failure = Assert.Single(records, r => Fields(r).ContainsKey("SqlState"));
+        Assert.Equal(("28P01", "ck_events_source", "events"), (Fields(failure)["SqlState"], Fields(failure)["ConstraintName"], Fields(failure)["TableName"]));
+        Assert.All(records, r =>
+        {
+            Assert.Null(r.Exception);
+            Assert.DoesNotContain("Иванов", r.Message);
+            Assert.All(r.StructuredState!, p => Assert.DoesNotContain("Иванов", p.Value ?? string.Empty));
+        });
+    }
+
+    [Fact]
+    public async Task TransientWriteFailure_OfSocketError_LogsErrorCodeAndTypeChain()
+    {
+        var failure = new IOException("outer", new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused));
+
+        var records = await RunWithWriteFailure(failure);
+
+        var record = Assert.Single(records, r => Fields(r).ContainsKey("ErrorChain"));
+        Assert.Equal("IOException > SocketException", Fields(record)["ErrorChain"]);
+        Assert.Contains("ConnectionRefused", Fields(record)["ErrorCode"]);
+        Assert.All(records, r => Assert.Null(r.Exception));
     }
 }

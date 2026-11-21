@@ -9,18 +9,21 @@ namespace Ktm.DataSaver.Infrastructure.Postgres;
 /// из событий (ПДн). Остаются SQLSTATE, таблица и ограничение. Прочие <see cref="NpgsqlException"/> (сеть, таймаут) сохраняются
 /// как внутренние: они значений не несут, а Core классифицирует по ним сетевые сбои.
 /// </summary>
-public sealed class PostgresStoreException : Exception, ISqlStateError
+public sealed class PostgresStoreException : Exception, ISqlStateError, IDbErrorLocation
 {
-    public PostgresStoreException(string message, string? sqlState, string? constraintName, Exception? inner)
+    public PostgresStoreException(string message, string? sqlState, string? constraintName, Exception? inner, string? tableName = null)
         : base(message, inner)
     {
         SqlState = sqlState;
         ConstraintName = constraintName;
+        TableName = tableName;
     }
 
     public string? SqlState { get; }
 
     public string? ConstraintName { get; }
+
+    public string? TableName { get; }
 
     /// <summary>
     /// Оборачивает ошибки драйвера; прочие (в том числе отмену) возвращает как есть. <see cref="PostgresException"/>
@@ -35,7 +38,7 @@ public sealed class PostgresStoreException : Exception, ISqlStateError
                 $"PostgreSQL error SQLSTATE {pg.SqlState}" +
                 (pg.TableName is null ? "" : $" on {pg.TableName}") +
                 (pg.ConstraintName is null ? "" : $" (constraint {pg.ConstraintName})"),
-                pg.SqlState, pg.ConstraintName, inner: null);
+                pg.SqlState, pg.ConstraintName, inner: null, pg.TableName);
         }
 
         return exception is NpgsqlException npg
