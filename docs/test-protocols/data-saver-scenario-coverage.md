@@ -73,3 +73,36 @@
 4. **№ 14 частично.** Интеграционный тест остановки при остановленной БД (`StoppableDatabase`): процесс завершается в пределах `Shutdown:TimeoutSeconds`, committed offset не вырос, после восстановления БД и перезапуска нет потерь. Либо принять юнит-покрытие решением в ЧТЗ.
 5. **№ 2 частично.** Обычный (не `Perf`) тест «три источника -> три строки в журнале» либо принять покрытие `Perf`-прогоном.
 6. **№ 18 и № 38.** Решения без автотеста (ручная проверка репозитория на секреты; свойство структуры). Принять как «закрыто иначе» в приёмке или оформить пунктами чек-листа ревью 11.4.
+
+## Коды выхода
+
+Ручной прогон 11.5.8: реальный процесс `Ktm.DataSaver` (`dotnet publish -c Release`, запуск `dotnet Ktm.DataSaver.dll` как
+дочернего процесса, не `WebApplicationFactory`), код выхода читался из `Process.ExitCode` (PowerShell) или `$?` (bash).
+Дата: 2026-11-21. Версия коммита: `26a69cc` (`feature/data-saver-core`). Инфраструктура в Docker: `apache/kafka:3.9.1`
+(KRaft, один брокер, порт 19092, топики `ktm.events.raw` и `ktm.events.rejected` по одной партиции) и
+`timescale/timescaledb:2.32.1-pg16` (порт 15432, база `ktm`, роль `postgres`, `SslMode=Disable`; схема журнала не
+создавалась, событий в топик не писалось: для проверяемых путей БД не нужна). Общие переменные запуска:
+`DataSaver__Kafka__BootstrapServers=localhost:19092`, `DataSaver__Postgres__{Host,Port,Database,Username,Password,SslMode}`,
+`DataSaver__Health__Port=<свободный порт>`.
+
+| Код | Случай | Способ воспроизведения | Команда | Наблюдаемый код | Патч |
+|---|---|---|---|---|---|
+| 0 | Штатная остановка | Процесс проработал 20 с и получил `CTRL_BREAK_EVENT` в своей консоли (аналог Ctrl+C: `ConsoleLifetime` -> `StopApplication`) | `dotnet Ktm.DataSaver.dll`; сигнал из отдельного процесса PowerShell через `AttachConsole` + `GenerateConsoleCtrlEvent(1, 0)` | **0**; в логе «Application is shutting down», «Data Saver ingestion loop finished» | нет |
+| 78 | Ошибка конфигурации | Запуск без обязательных настроек | `dotnet Ktm.DataSaver.dll` (переменные `DataSaver__*` не заданы) | **78**; в stderr одна строка «Invalid configuration, the service is not started: DataSaver__Kafka__BootstrapServers is required. DataSaver__Postgres__Host is required.», без стек-трейса | нет |
+| 70 | Фатальная ошибка клиента Kafka | **Честный способ без патча**: static membership. Реплика A запущена с `DataSaver__Kafka__GroupInstanceId=same-id`, через 20 с запущена реплика B с тем же `group.instance.id` (другой `Health__Port`). Брокер выгнал A, librdkafka выставил фатальную ошибку `FencedInstanceId` («Static consumer fenced by other consumer with same group.instance.id», `Error.IsFatal`) | две копии `dotnet Ktm.DataSaver.dll` с одинаковым `GroupInstanceId` | **70** у реплики A; в логе `KafkaFatalErrorHandler` -> `HostProcessTerminator`: «Process termination requested with exit code 70: Kafka fatal error FencedInstanceId...». Реплика B осталась работать (остановлена вручную) | нет |
+| 1 | Падение цикла приёма | Временный патч (ниже): `KafkaMessageSource.ConsumeAsync` бросает `InvalidOperationException`. Штатных путей, где из цикла честно вылетает нефатальное исключение, найти не удалось: сбои записи, стадий и commit цикл обрабатывает повтором или предупреждением, нефатальные ошибки Consume проглатываются | `dotnet Ktm.DataSaver.dll` из публикации с патчем; процесс завершился сам | **1**; в логе «Ingestion loop failed; the process is terminating» и «Process termination requested with exit code 1: Ingestion loop failed: InvalidOperationException» | да |
+
+Временный патч для кода 1 (в репозиторий не попал, перед коммитом `git status` чист по `src/`): в начале
+`KafkaMessageSource.ConsumeAsync` на время сборки публикации была добавлена строка с условным `throw new
+InvalidOperationException(...)` (условие `cancellationToken.CanBeCanceled`, чтобы компилятор не ругался на недостижимый
+код: предупреждения собираются как ошибки). Публикация собрана в отдельный каталог, патч сразу откачен
+`git checkout -- src`. Для кодов 0, 70 и 78 использовалась непатченная публикация.
+
+Наблюдения:
+
+- Для кода 70 без патча сработала вся цепочка: `ConsumeException` с `IsFatal` -> `KafkaFatalErrorHandler` (70) ->
+  `HostProcessTerminator` -> `Environment.ExitCode`. Затем `DataSaverWorker` поймал то же исключение и вызвал
+  `Terminate(1, ...)`, но терминатор идемпотентен, поэтому итог остался 70, а не 1. Закрытие consumer при остановке
+  дало предупреждение «Kafka consumer close failed» (на фатально сброшенном клиенте ожидаемо), на код оно не повлияло.
+- `return Environment.ExitCode` в `Program.cs` работает: коды 70 и 1 доходят до процесса, не превращаясь в 0.
+- Не проверялось: код 70 от фатальной ошибки producer (идемпотентный producer не включён) и код 1 без патча.
