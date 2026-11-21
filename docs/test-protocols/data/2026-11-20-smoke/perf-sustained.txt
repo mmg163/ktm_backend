@@ -1,0 +1,32 @@
+== Sustained load: 500 ev/s x 90 s = 45000 events, 3 sources, 9 partitions ==
+Started 2026-11-20T18:18:52.2655110+00:00; OS Microsoft Windows 10.0.26200; .NET 10.0.13; logical CPUs 12
+Git: 2749972 (working tree has uncommitted changes)
+Images: timescale/timescaledb:2.32.1-pg16, apache/kafka:3.9.1
+Docker: 29.9.3, 12 CPU, 8269877248 bytes
+Other processes: parallel tasks on the host are NOT controlled by the test; record them in the protocol
+Bootstrap plaintext://127.0.0.1:61698/; measured containers: a1cc518f4bec,cea5ea469737
+Dedicated database created for this run; ktm.events count(*) before seed: 0
+ktm.events count(*) after seed of 300000: 300000
+Effective config: DataSaver__Batch__MaxSize=500, DataSaver__Batch__MaxWaitMs=1000, DataSaver__PollIntervalMs=500, DataSaver__Kafka__SessionTimeoutMs=10000, DataSaver__Postgres__SslMode=Disable, DataSaver__Shutdown__TimeoutSeconds=10, Postgres pool max=10
+Group stable: True
+Background tasks (publisher, latency poller, ledger, docker stats) still running after shutdown: 0
+ktm.events count(*) after run: 345000 (seed 300000 + run 45000, expected run rows 45000)
+Generated 45000 events in 90,0 s => 499,8 ev/s published; delivery errors: 0
+Drain after generation end: 0,3 s
+Steady interval t=18..80 s: written 499,9 ev/s (counter ktm.datasaver.events.written); pass threshold 95 % of target (short run, boundary 600 s)
+Per-minute written rate (ev/s): 491
+Publisher uniformity: 6228 send iterations, events per iteration p50=8 p99=9 max=20; published ev/s per ledger interval min=492 p5=494 p95=505 max=508
+Latency publish -> row visible (ms; error up to 250 ms + poll time, see poll stats), steady events n=31000: p50=773 p95=1245 p99=1342 max=1453
+Latency all events n=45000: p50=766 p99=1340 max=1455; events not observed by poller: 0
+Latency poller load (cursor read, new rows only): period 250 ms + query, polls=345, mean rows per poll=130,4, mean poll duration=4,8 ms, max=28,8 ms
+Ledger period 1000 ms (counters and committed offsets with the same period), samples=91; committed offsets read: mean 3 ms, max 23 ms per read (committed value error up to this plus 1000 ms)
+Lag by committed offsets (published - committed, messages), steady: first third mean=495, last third mean=494, max=503
+Lag by writes (published - written, messages), steady: first third mean=495, last third mean=494, max=503
+Lag every ~60 s (published-committed / published-written): 19s:494/494, 79s:497/497
+Batches: 90, size mean=500 p50=500 max=500; write duration ms: p50=68 p99=207 max=207
+Test process (Data Saver + generator + 3 clients, in-process): CPU mean=15% of one core (max 53%), working set mean=131 MB, max=136 MB; GC heap now=10 MB, gen2 collections=45
+docker stats: t=0s nice_bose cpu=1.38% mem=245.5MiB / 7.702GiB ; clever_mclean cpu=154.65% mem=376.1MiB / 7.702GiB
+docker stats: t=31s nice_bose cpu=6.97% mem=256.9MiB / 7.702GiB ; clever_mclean cpu=21.97% mem=568.1MiB / 7.702GiB
+docker stats: t=63s nice_bose cpu=3.99% mem=267.1MiB / 7.702GiB ; clever_mclean cpu=13.95% mem=595.7MiB / 7.702GiB
+DB: 345000 rows in ktm.events, hypertable total size 137 MB, chunks 1
+Log records >= Warning: 0; loop terminations: 0

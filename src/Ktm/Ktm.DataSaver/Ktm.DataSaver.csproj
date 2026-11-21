@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <IsDataSaverProject>true</IsDataSaverProject>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Ktm.DataSaver.Infrastructure\Ktm.DataSaver.Infrastructure.csproj" />
+    </ItemGroup>
+
+</Project>

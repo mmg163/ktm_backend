@@ -1,0 +1,20 @@
+== Max single-instance rate: backlog of 300000 events, 9 partitions, instance starts after publishing ==
+Started 2026-11-20T18:46:38.3933250+00:00; OS Microsoft Windows 10.0.26200; .NET 10.0.13; logical CPUs 12
+Git: 2321265 (working tree has uncommitted changes)
+Images: timescale/timescaledb:2.32.1-pg16, apache/kafka:3.9.1
+Docker: 29.9.3, 12 CPU, 8269877248 bytes
+Other processes: parallel tasks on the host are NOT controlled by the test; record them in the protocol
+Bootstrap plaintext://127.0.0.1:62328/; measured containers: c48d3ee23dfe,6067b1bc921a
+Dedicated database created for this run; ktm.events count(*) before seed: 0
+ktm.events count(*) after seed of 300000: 300000
+Effective config: DataSaver__Batch__MaxSize=500, DataSaver__Batch__MaxWaitMs=1000, DataSaver__PollIntervalMs=500, DataSaver__Kafka__SessionTimeoutMs=10000, DataSaver__Postgres__SslMode=Disable, DataSaver__Shutdown__TimeoutSeconds=10, Postgres pool max=10
+Drained 300000 in 37,7 s from instance start (includes host start and group join; counter sampling 250 ms); first write at 3,7 s
+Overall: 7967 ev/s; from first write: 8831 ev/s; 10%..90% interval: 9019 ev/s
+Batches: 600, mean size 500; write duration ms p50=31 p99=97 max=216
+ktm.events count(*) after drain: 600000 (seed 300000 + backlog 300000, expected 300000)
+DB: 600000 rows in ktm.events, hypertable total size 297 MB, chunks 1
+Log records >= Warning: 1
+
+== EXPLAIN (ANALYZE, BUFFERS) of a 500-row insert into the filled hypertable under role ktm_app (rolled back). NOT the text of NpgsqlEventStore.InsertEventsSql: rows come from generate_series instead of unnest of parameters, so the figure is a lower bound ==
+Execution Time ms, 7 runs (first is cold): 30.3, 25.7, 24.7, 24.3, 26.2, 27.0, 32.0
+Full plans of each run: explain-1.txt .. explain-7.txt next to this report

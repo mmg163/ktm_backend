@@ -1,0 +1,16 @@
+Custom Scan (ModifyHypertable)  (cost=46.17..47.42 rows=0 width=0) (actual time=24.150..24.152 rows=0 loops=1)
+  Buffers: shared hit=10000 dirtied=16 written=16
+  ->  Insert on events  (cost=46.17..47.42 rows=0 width=0) (actual time=24.117..24.118 rows=0 loops=1)
+        Conflict Resolution: NOTHING
+        Conflict Arbiter Indexes: ux_events_natural_key
+        Tuples Inserted: 500
+        Conflicting Tuples: 0
+        Buffers: shared hit=10000 dirtied=16 written=16
+        ->  Sort  (cost=46.17..47.42 rows=500 width=228) (actual time=1.651..1.760 rows=500 loops=1)
+              Sort Key: (('{skud,cv,1c-do}'::text[])[((g.g % 3) + 1)]), (('explain-d4104195e7c14c149cae05ff8aa90eab-'::text || (g.g)::text)), ((now() - ((g.g)::double precision * '00:00:00.002'::interval)))
+              Sort Method: quicksort  Memory: 125kB
+              ->  Function Scan on generate_series g  (cost=0.00..23.75 rows=500 width=228) (actual time=0.071..0.808 rows=500 loops=1)
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.290 ms
+Execution Time: 24.291 ms

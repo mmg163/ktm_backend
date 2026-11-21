@@ -133,3 +133,11 @@ $RECYCLE.BIN/
 _NCrunch*
 
 .idea*
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Секреты развёртывания Data Saver (Docker secrets)
+deploy/data-saver/secrets/
+**/secrets/
