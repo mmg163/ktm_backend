@@ -115,4 +115,23 @@ public class HealthProbeTests
 
         Assert.False(result);
     }
+
+    [Fact]
+    public async Task DatabaseProbe_ProbeIgnoringTheToken_IsUnavailableWithinLimit_AndClientCancellationStillWins()
+    {
+        var failures = new List<Exception>();
+        var started = System.Diagnostics.Stopwatch.StartNew();
+
+        var result = await DatabaseProbe.RunAsync(_ => Task.Delay(Timeout.Infinite), TimeSpan.FromMilliseconds(100), failures.Add, default)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(result);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(5));
+        Assert.IsType<TimeoutException>(Assert.Single(failures));
+
+        using var clientGone = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await DatabaseProbe.RunAsync(_ => Task.Delay(Timeout.Infinite), TimeSpan.FromSeconds(30), failures.Add, clientGone.Token));
+        Assert.Single(failures);
+    }
 }

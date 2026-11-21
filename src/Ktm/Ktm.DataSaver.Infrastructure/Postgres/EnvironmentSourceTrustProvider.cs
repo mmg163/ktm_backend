@@ -1,8 +1,13 @@
-using System.Collections;
 using System.Globalization;
 using Ktm.DataSaver.Core.Ingestion;
 
 namespace Ktm.DataSaver.Infrastructure.Postgres;
+
+/// <summary>Настройка задана недопустимым значением; <see cref="Setting"/> - имя настройки, значение в сообщение не входит.</summary>
+public sealed class InvalidSettingException(string setting, string message) : InvalidOperationException(message)
+{
+    public string Setting { get; } = setting;
+}
 
 /// <summary>
 /// Временный источник коэффициентов доверия (ADR-0002, G-3): <c>DataSaver__Trust__Default</c> (по умолчанию 100) и
@@ -17,18 +22,6 @@ public sealed class EnvironmentSourceTrustProvider : ISourceTrustProvider
 
     private readonly short _default;
     private readonly Dictionary<string, short> _bySource = new(StringComparer.Ordinal);
-
-    /// <summary>Читает переменные окружения процесса.</summary>
-    public static EnvironmentSourceTrustProvider FromEnvironment()
-    {
-        var variables = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            variables[(string)entry.Key] = entry.Value as string;
-        }
-
-        return new EnvironmentSourceTrustProvider(variables);
-    }
 
     public EnvironmentSourceTrustProvider(IReadOnlyDictionary<string, string?> variables)
     {
@@ -53,7 +46,7 @@ public sealed class EnvironmentSourceTrustProvider : ISourceTrustProvider
         if (string.IsNullOrWhiteSpace(value)) return null;
         if (!short.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var trust) || trust > 100)
         {
-            throw new InvalidOperationException($"{name} must be an integer in range 0..100.");
+            throw new InvalidSettingException(name, $"{name} must be an integer in range 0..100.");
         }
 
         return trust;

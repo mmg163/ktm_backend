@@ -20,14 +20,15 @@ public static class DatabaseProbe
         limit.CancelAfter(timeout);
         try
         {
-            await probe(limit.Token);
+            // WaitAsync держит предел и для пробы, которая не слушает токен.
+            await probe(limit.Token).WaitAsync(timeout, cancellationToken);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception ex) when (ex is NpgsqlException or OperationCanceledException or InvalidOperationException or IOException or ObjectDisposedException)
+        catch (Exception ex) when (ex is NpgsqlException or TimeoutException or OperationCanceledException or InvalidOperationException or IOException or ObjectDisposedException)
         {
             onFailure(ex);
             return false;

@@ -44,10 +44,11 @@ public interface IMessageSource
 /// <summary>
 /// Порт записи в журнал (5.x): одна транзакция на вызов. Исключение означает, что транзакция откатана целиком;
 /// запись идемпотентна по ключу события, поэтому повтор той же пачки безопасен.
+/// <c>receivedAt</c> - момент получения пачки, один на пачку и неизменный при повторах (store время не читает).
 /// </summary>
 public interface IEventStore
 {
-    ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken);
+    ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken);
 }
 
 /// <summary>Отбракованное сообщение с причиной; <c>Origin</c> - null, если формат сообщения не разобран.</summary>

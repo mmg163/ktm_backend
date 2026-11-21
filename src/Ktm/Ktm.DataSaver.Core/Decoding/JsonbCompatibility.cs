@@ -102,15 +102,10 @@ internal static class JsonbCompatibility
     /// <summary>Разбор сырого JSON-числа: <c>-?int(.frac)?([eE][+-]?exp)?</c> (форма уже проверена парсером).</summary>
     private static string? CheckNumber(string raw)
     {
+        // Единый расчёт для любых чисел: без экспоненты она равна 0 (длинная дробная часть тоже может выйти за предел).
         var e = raw.IndexOfAny(['e', 'E']);
-        if (e < 0)
-        {
-            // Без экспоненты число ограничено длиной тела (64 КиБ), в пределы numeric укладывается.
-            return null;
-        }
-
-        var mantissa = raw[..e];
-        var exponent = ParseExponent(raw.AsSpan(e + 1));
+        var mantissa = e < 0 ? raw : raw[..e];
+        var exponent = e < 0 ? 0 : ParseExponent(raw.AsSpan(e + 1));
 
         var dot = mantissa.IndexOf('.');
         var integerPart = (dot < 0 ? mantissa : mantissa[..dot]).TrimStart('-');

@@ -8,7 +8,7 @@ namespace Ktm.DataSaver.Infrastructure.Postgres;
 /// <summary>Запись пачки с итогом по числу добавленных строк (для метрик); порт Core <see cref="IEventStore"/> остаётся без числа.</summary>
 public interface IBatchWriter
 {
-    Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken);
+    Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken);
 }
 
 /// <summary>Итог записи пачки: сколько строк реально добавлено (дубли не считаются).</summary>
@@ -55,24 +55,21 @@ public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ISourceTrustProvider _trust;
-    private readonly TimeProvider _time;
 
-    public NpgsqlEventStore(NpgsqlDataSource dataSource, ISourceTrustProvider trust, TimeProvider? time = null)
+    public NpgsqlEventStore(NpgsqlDataSource dataSource, ISourceTrustProvider trust)
     {
         _dataSource = dataSource;
         _trust = trust;
-        _time = time ?? TimeProvider.System;
     }
 
-    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken) =>
-        await WriteBatchAsync(events, cancellationToken);
+    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken) =>
+        await WriteBatchAsync(events, receivedAt, cancellationToken);
 
-    public async Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken)
+    public async Task<EventWriteResult> WriteBatchAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(events);
         if (events.Count == 0) return default;
 
-        var receivedAt = _time.GetUtcNow();
         // Единый порядок захвата ключей уникального индекса: параллельные писатели не взаимоблокируются.
         var ordered = events
             .OrderBy(e => e.Source, StringComparer.Ordinal)

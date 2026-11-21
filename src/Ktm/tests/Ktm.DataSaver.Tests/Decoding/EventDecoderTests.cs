@@ -76,6 +76,8 @@ public class EventDecoderTests
         { "schemaVersion string", EventSamples.SkudWith(o => o["schemaVersion"] = "1"), RejectReasons.UnknownSchemaVersion },
         { "schemaVersion absent", EventSamples.SkudWith(o => o.Remove("schemaVersion")), RejectReasons.UnknownSchemaVersion },
         { "occurredAt with offset", EventSamples.SkudWith(o => o["occurredAt"] = "2026-11-19T07:58:12+03:00"), RejectReasons.InvalidSchema },
+        { "occurredAt arabic-indic digits", EventSamples.SkudWith(o => o["occurredAt"] = "٢٠٢٦-11-19T04:58:12Z"), RejectReasons.InvalidSchema },
+        { "occurredAt fullwidth digits", EventSamples.SkudWith(o => o["occurredAt"] = "2026-11-19T04:58:12Z".Replace('2', '２')), RejectReasons.InvalidSchema },
         { "occurredAt not a date", EventSamples.SkudWith(o => o["occurredAt"] = "2026-13-45T04:58:12Z"), RejectReasons.InvalidSchema },
         { "deviceId absent for skud", EventSamples.SkudWith(o => o.Remove("deviceId")), RejectReasons.InvalidSchema },
         { "eventType uppercase", EventSamples.SkudWith(o => o["eventType"] = "Access_Granted"), RejectReasons.InvalidSchema },

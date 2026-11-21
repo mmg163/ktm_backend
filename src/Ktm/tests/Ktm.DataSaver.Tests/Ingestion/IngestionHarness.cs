@@ -129,6 +129,9 @@ internal sealed class FakeStore(List<string> log) : IEventStore
 {
     public List<string[]> Writes { get; } = [];
 
+    /// <summary>received_at, с которым вызван порт, по номеру вызова.</summary>
+    public List<DateTimeOffset> ReceivedAts { get; } = [];
+
     /// <summary>Номер вызова (с 1) -> исключение либо null.</summary>
     public Func<int, Exception?> Fail { get; set; } = _ => null;
 
@@ -137,9 +140,10 @@ internal sealed class FakeStore(List<string> log) : IEventStore
     /// <summary>Запись «зависает» до отмены токена (замена зависшего соединения с БД).</summary>
     public bool Hang { get; set; }
 
-    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, CancellationToken cancellationToken)
+    public async ValueTask WriteAsync(IReadOnlyList<ParsedEvent> events, DateTimeOffset receivedAt, CancellationToken cancellationToken)
     {
         log.Add("write");
+        ReceivedAts.Add(receivedAt);
         Writes.Add(events.Select(e => e.SourceEventId).ToArray());
         OnCall?.Invoke(Writes.Count);
         cancellationToken.ThrowIfCancellationRequested();

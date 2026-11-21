@@ -86,6 +86,21 @@ public class EventDecoderJsonbCompatibilityTests
     }
 
     [Fact]
+    public void Decode_FractionWithoutExponent_IsLimitedBy16383Digits()
+    {
+        static string Fraction(int digits) => "0." + new string('0', digits - 1) + "1";
+
+        var over = _decoder.Decode(WithPayload($$"""{"n":{{Fraction(16384)}}}"""));
+        var edge = _decoder.Decode(WithPayload($$"""{"n":{{Fraction(16383)}}}"""));
+        var zero = _decoder.Decode(WithPayload($$"""{"n":0.{{new string('0', 20000)}}}"""));
+
+        Assert.Equal(RejectReasons.InvalidSchema, over.Reason);
+        Assert.Contains("numeric range", over.Detail);
+        Assert.True(edge.IsSuccess, edge.Detail);
+        Assert.True(zero.IsSuccess, zero.Detail);
+    }
+
+    [Fact]
     public void Decode_BodyOfExactly64KiB_IsAccepted_AndOneByteMoreIsRejected()
     {
         byte[] BodyWithBlob(int blobLength) => WithPayload($$"""{"blob":"{{new string('a', blobLength)}}"}""");
