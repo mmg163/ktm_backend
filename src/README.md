@@ -47,11 +47,6 @@ flowchart LR
         COR[(ktm.event_corrections)]
     end
 
-    subgraph CONS[Потребители данных: вне solution]
-        API[REST API]
-        FE[Фронтенд ktm_revisor]
-    end
-
     SKUD -.-> K
     CV -.-> K
     DO -.-> K
@@ -59,9 +54,6 @@ flowchart LR
     DS -->|не прошли проверку формата: ktm.events.rejected| K
     DS -->|пачками, идемпотентно| EV
     DS --> COR
-    EV -.-> API
-    COR -.-> API
-    API -.-> FE
 ```
 
 Формат сообщения источников - `docs/api/kafka-event.schema.json`.
