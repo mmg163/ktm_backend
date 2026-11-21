@@ -1,7 +1,9 @@
 # Data Saver (ADR-0002). Запуск из каталога deploy/data-saver:
 #   cp .env.example .env            # заполнить значения; .env в git не попадает
-#   mkdir -p secrets && printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password
-#   printf '%s' '<пароль ktm_migrator>' > secrets/ktm_migrator_password   # роль только для DDL, подключён только к migrate
+#   mkdir -p secrets && umask 077
+#   read -rs -p 'пароль ktm_app: ' P && printf '%s' "$P" > secrets/ktm_app_password; unset P; echo
+#   read -rs -p 'пароль ktm_migrator: ' P && printf '%s' "$P" > secrets/ktm_migrator_password; unset P; echo   # роль только для DDL, подключён только к migrate
+#   (пароль не вводить в аргументах команды: он попадёт в историю shell и argv; read/printf - встроенные команды bash)
 #   sudo chown 1654:1654 secrets/ktm_app_password secrets/ktm_migrator_password && chmod 0400 secrets/ktm_app_password secrets/ktm_migrator_password   # 1654 - uid пользователя контейнера
 #   (0444 - только альтернатива, если chown невозможен: файл станет читаем любому локальному пользователю хоста)
 #   docker compose up -d --build    # сначала migrate (разово), затем data-saver
@@ -17,7 +19,14 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    env_file: .env
+      - /var/lib/postgresql/data   # образ объявляет VOLUME: без tmpfs копятся анонимные тома
+    # Только нужное скрипту (значения - из .env); Kafka и прочее в migrate не передаются.
+    environment:
+      DataSaver__Postgres__Host: ${DataSaver__Postgres__Host:-}
+      DataSaver__Postgres__Port: ${DataSaver__Postgres__Port:-}
+      DataSaver__Postgres__Database: ${DataSaver__Postgres__Database:-}
+      DataSaver__Postgres__SslMode: ${DataSaver__Postgres__SslMode:-}
+      MIGRATE_LOCK_TIMEOUT_SECONDS: ${MIGRATE_LOCK_TIMEOUT_SECONDS:-}
     secrets:
       - ktm_migrator_password
     volumes:

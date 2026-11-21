@@ -32,13 +32,8 @@ die() {
 
 # ---------- 1. Конфигурация ----------
 
-require_env() {
-    eval "_v=\${$1:-}"
-    [ -n "$_v" ] || die 2 "required environment variable $1 is not set"
-}
-
-require_env DataSaver__Postgres__Host
-require_env DataSaver__Postgres__Database
+[ -n "${DataSaver__Postgres__Host:-}" ] || die 2 "required environment variable DataSaver__Postgres__Host is not set"
+[ -n "${DataSaver__Postgres__Database:-}" ] || die 2 "required environment variable DataSaver__Postgres__Database is not set"
 PGHOST=$DataSaver__Postgres__Host
 PGDATABASE=$DataSaver__Postgres__Database
 PGPORT=${DataSaver__Postgres__Port:-5432}
@@ -73,7 +68,6 @@ export PGCONNECT_TIMEOUT
 # ---------- 2. Секрет: файл -> .pgpass в tmpfs ----------
 
 [ -f "$PASSWORD_FILE" ] && [ -r "$PASSWORD_FILE" ] || die 2 "password file is missing or not readable: $PASSWORD_FILE"
-
 
 umask 077
 TMP_DIR=$(mktemp -d /tmp/migrate.XXXXXX) || die 2 "cannot create temporary directory in /tmp"
@@ -125,6 +119,10 @@ while IFS= read -r _name; do
     printf '%s\n' "$_name" | grep -Eq '^V[0-9]{1,9}__[A-Za-z0-9_.-]+\.sql$' ||
         die 1 "file name does not match V<number>__<name>.sql: $_name"
     [ -f "$MIGRATIONS_DIR/$_name" ] || die 1 "not a regular file: $_name"
+    # Метакоманды psql (\! и т.п.) в V-файлах запрещены: файл исполняется под ролью DDL.
+    if grep -Eq '^[[:space:]]*[\]' "$MIGRATIONS_DIR/$_name"; then
+        die 1 "psql meta-command (line starting with a backslash) is not allowed in $_name"
+    fi
     _num=$(printf '%s' "$_name" | sed -E 's/^V0*([0-9]+)__.*/\1/')
     [ "$_num" -ne "$_prev" ] || die 1 "duplicate migration number $_num (file $_name)"
     # Порядок задаёт имя; если числовой порядок с ним расходится (V2 и V10), результат неоднозначен.
@@ -154,7 +152,7 @@ wait_line() {
     done
 }
 
-show_holder_output() { [ ! -s "$HOLDER_OUT" ] || cat "$HOLDER_OUT" >&2; }
+show_holder_output() { grep -v 'KTM_' "$HOLDER_OUT" >&2 || true; }
 
 mkfifo "$TMP_DIR/holder.in"
 (
