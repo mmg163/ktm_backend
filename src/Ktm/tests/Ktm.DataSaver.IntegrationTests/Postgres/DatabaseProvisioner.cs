@@ -36,6 +36,13 @@ internal static class DatabaseProvisioner
         await ApplyMigrationsAsync(ConnectionFor(adminConnectionString, "ktm_migrator", MigratorPassword));
     }
 
+    /// <summary>Только <c>db/init</c> и пароли ролей, без миграций (их накатывает проверяемый скрипт).</summary>
+    public static async Task ProvisionWithoutMigrationsAsync(string adminConnectionString, string migratorPassword)
+    {
+        await ApplyInitAsync(adminConnectionString);
+        await SetRolePasswordAsync(adminConnectionString, "ktm_migrator", migratorPassword);
+    }
+
     public static Task ApplyInitAsync(string adminConnectionString) => ApplyFilesAsync("db/init", adminConnectionString);
 
     public static Task ApplyMigrationsAsync(string migratorConnectionString) => ApplyFilesAsync("db/migrations", migratorConnectionString);
@@ -65,7 +72,7 @@ internal static class DatabaseProvisioner
         }
     }
 
-    private static string RepositoryRoot()
+    internal static string RepositoryRoot()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {

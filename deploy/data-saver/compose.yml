@@ -1,11 +1,43 @@
 # Data Saver (ADR-0002). Запуск из каталога deploy/data-saver:
 #   cp .env.example .env            # заполнить значения; .env в git не попадает
-#   mkdir -p secrets && printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password
-#   sudo chown 1654:1654 secrets/ktm_app_password && chmod 0400 secrets/ktm_app_password   # 1654 - uid пользователя контейнера
+#   mkdir -p secrets && umask 077
+#   read -rs -p 'пароль ktm_app: ' P && printf '%s' "$P" > secrets/ktm_app_password; unset P; echo
+#   read -rs -p 'пароль ktm_migrator: ' P && printf '%s' "$P" > secrets/ktm_migrator_password; unset P; echo   # роль только для DDL, подключён только к migrate
+#   (пароль не вводить в аргументах команды: он попадёт в историю shell и argv; read/printf - встроенные команды bash)
+#   sudo chown 1654:1654 secrets/ktm_app_password secrets/ktm_migrator_password && chmod 0400 secrets/ktm_app_password secrets/ktm_migrator_password   # 1654 - uid пользователя контейнера
 #   (0444 - только альтернатива, если chown невозможен: файл станет читаем любому локальному пользователю хоста)
-#   docker compose up -d --build
+#   docker compose up -d --build    # сначала migrate (разово), затем data-saver
 # Контекст сборки - корень репозитория (Core.csproj встраивает docs/api, design Р-10а).
 services:
+  # Разовый накат db/migrations/V*.sql под ktm_migrator (ADR-0004, раздел 5). Пароль - только файл Docker secret
+  # ktm_migrator_password (подключён только к этому сервису); скрипт пишет его в .pgpass в tmpfs.
+  migrate:
+    image: postgres:16.16-alpine3.24
+    restart: "no"
+    entrypoint: ["sh", "/migrate/migrate.sh"]
+    user: "1654:1654"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/lib/postgresql/data   # образ объявляет VOLUME: без tmpfs копятся анонимные тома
+    # Только нужное скрипту (значения - из .env); Kafka и прочее в migrate не передаются.
+    environment:
+      DataSaver__Postgres__Host: ${DataSaver__Postgres__Host:-}
+      DataSaver__Postgres__Port: ${DataSaver__Postgres__Port:-}
+      DataSaver__Postgres__Database: ${DataSaver__Postgres__Database:-}
+      DataSaver__Postgres__SslMode: ${DataSaver__Postgres__SslMode:-}
+      MIGRATE_LOCK_TIMEOUT_SECONDS: ${MIGRATE_LOCK_TIMEOUT_SECONDS:-}
+    secrets:
+      - ktm_migrator_password
+    volumes:
+      - ../../db:/db:ro
+      - ./migrate:/migrate:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   data-saver:
     build:
       context: ../..
@@ -16,6 +48,10 @@ services:
     env_file: .env
     secrets:
       - ktm_app_password
+    # Стартует только после успешной миграции; при ошибке migrate сервис не создаётся (docker compose logs migrate).
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     # Связан с DataSaver__Shutdown__TimeoutSeconds (30 по умолчанию): 30 + 5 с запас host + 5 с запас = 40 (ADR-0002 D-8,
     # решение Q3). Иначе SIGKILL придёт раньше предела остановки. При увеличении Shutdown__TimeoutSeconds увеличить и это.
     stop_grace_period: 40s
@@ -46,3 +82,5 @@ services:
 secrets:
   ktm_app_password:
     file: ./secrets/ktm_app_password
+  ktm_migrator_password:
+    file: ./secrets/ktm_migrator_password
