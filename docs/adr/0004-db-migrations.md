@@ -22,7 +22,7 @@
 **Версионируемые SQL-скрипты в репозитории, без EF Core migrations.**
 
 ```
-db/init/001_roles_and_extension.sql     суперпользователь, один раз: роли ktm_migrator/ktm_app, схема ktm, CREATE EXTENSION timescaledb
+db/init/001_roles_and_extension.sql     суперпользователь, один раз: роли ktm_migrator/ktm_app, схема ktm (расширение timescaledb уже установлено администратором, init его не создаёт)
 db/migrations/V001__event_journal.sql   под ktm_migrator: events, event_corrections, hypertable, индексы, триггер, компрессия, права
 db/migrations/V002__...                 следующие изменения схемы (по одному файлу, имя - порядковый номер + смысл)
 db/README.md                            порядок применения, команда psql, проверка идемпотентности

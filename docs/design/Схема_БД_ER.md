@@ -163,8 +163,8 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 
 ### 4.3 Установка расширения
 
-`CREATE EXTENSION timescaledb` требует суперпользователя (расширение не «trusted») и выполняется один раз при инициализации БД
-администратором, а не ролью миграций. Скрипт миграций проверяет его наличие и завершается ошибкой, если его нет.
+`CREATE EXTENSION timescaledb` требует суперпользователя (расширение не «trusted») и выполняется один раз администратором
+(на стенде предприятия уже установлено; init-скрипт его не создаёт, строка закомментирована), а не ролью миграций. Скрипт миграций проверяет его наличие и завершается ошибкой, если его нет.
 
 ---
 
@@ -307,7 +307,8 @@ LIMIT  200;
 -- Выполняется под суперпользователем один раз при инициализации (db/init/001_roles_and_extension.sql; не ролью миграций):
 --   CREATE ROLE ktm_migrator LOGIN;           -- без пароля; пароль задаёт администратор отдельно
 --   CREATE ROLE ktm_app      LOGIN;           -- без пароля
---   (БД ktm_revisor уже есть) CREATE EXTENSION IF NOT EXISTS timescaledb;
+--   (БД ktm_revisor уже есть; расширение уже установлено администратором, в скрипте закомментировано)
+--   -- CREATE EXTENSION IF NOT EXISTS timescaledb;
 --   GRANT CONNECT ON DATABASE ktm_revisor TO ktm_migrator, ktm_app;   -- REVOKE ... FROM PUBLIC НЕ выполняется (п. 5)
 --   CREATE SCHEMA IF NOT EXISTS ktm AUTHORIZATION ktm_migrator;       -- владелец существующей схемы не меняется
 --   REVOKE ALL ON SCHEMA ktm FROM PUBLIC;

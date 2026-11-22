@@ -12,7 +12,7 @@ BEGIN
         RAISE EXCEPTION 'migration must run as ktm_migrator, current role is %', current_user;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
-        RAISE EXCEPTION 'extension timescaledb is missing: run db/init/001_roles_and_extension.sql first';
+        RAISE EXCEPTION 'extension timescaledb is missing in this database: create it (see db/init/001_roles_and_extension.sql) first';
     END IF;
 END
 $$;
