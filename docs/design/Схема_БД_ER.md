@@ -202,7 +202,7 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
   создан до PG15 (с `CREATE` у `PUBLIC`), команда **затронет все роли общей БД** (включая `skud_*`), лишив их права создавать объекты
   в `public`; перед выполнением `db/init` на такой БД проверить `\dn+ public` и согласовать с администратором.
   **Отступление: `REVOKE ALL ON SCHEMA public` не выполняется** - функции TimescaleDB (`create_hypertable`,
-  `add_compression_policy`) находятся в `public`, и `ktm_migrator` без `USAGE` не смог бы их вызвать. Прочие объекты БД
+  `add_compression_policy`) находятся в `public`, и `ktm_migrator` без `USAGE` не смог бы их вызвать. Поэтому `db/init` явно выполняет `GRANT USAGE ON SCHEMA public TO ktm_migrator` (на стендах с hardening `USAGE` у `PUBLIC` может быть отозван). Прочие объекты БД
   `ktm_revisor` этими ролями не затрагиваются, за исключением права `CREATE` в `public` у `PUBLIC` (см. выше).
 - Пароли в `db/init` **не задаются** и в репозиторий не попадают: администратор задаёт их после `init` отдельно (способ - `db/README.md`).
 - **Известное ограничение: `TRUNCATE`.** Владелец `ktm_migrator` может выполнить `TRUNCATE`, `DROP TABLE`, `drop_chunks` - триггер
