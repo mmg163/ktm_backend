@@ -9,7 +9,7 @@ SQL-скрипты схемы `ktm` (журнал событий Data Saver). Р
 
 | Файл | Кто применяет | Что делает |
 |---|---|---|
-| `init/001_roles_and_extension.sql` | суперпользователь, один раз | роли `ktm_migrator` и `ktm_app` (без паролей), `CREATE EXTENSION timescaledb`, схема `ktm`, `GRANT CONNECT`, `ALTER DEFAULT PRIVILEGES` |
+| `init/001_roles_and_extension.sql` | суперпользователь, один раз | роли `ktm_migrator` и `ktm_app` (без паролей), схема `ktm`, `GRANT CONNECT`, `ALTER DEFAULT PRIVILEGES`; расширение `timescaledb` не создаёт (уже установлено администратором; для среды без него раскомментировать `CREATE EXTENSION` в скрипте) |
 | `migrations/V001__event_journal.sql` | `ktm_migrator` | `ktm.events` (hypertable, чанк 7 суток), `ktm.event_corrections`, индексы, триггеры неизменяемости (UPDATE/DELETE и TRUNCATE), сжатие (30 суток), `REVOKE/GRANT` |
 
 ## Правила
