@@ -164,7 +164,7 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
 коммита, пачка придёт повторно (дубликатов в журнале не будет - их гасит уникальный ключ). Остановка посреди обработки и
 `kill -9` данные не теряют и дубликатов не создают (ADR-0002, D-8).
 
-`stop_grace_period` в `compose.yml` задан 40 с = `Shutdown__TimeoutSeconds` (30) + запас host 5 с (решение лида Q3) +
+`stop_grace_period` в `docker-compose.yml` задан 40 с = `Shutdown__TimeoutSeconds` (30) + запас host 5 с (решение лида Q3) +
 ещё 5 с запаса. Значения связаны.
 **При увеличении `Shutdown__TimeoutSeconds` увеличьте и `stop_grace_period`**, иначе Docker пошлёт SIGKILL раньше
 предела (данные не теряются, но остановка перестаёт быть штатной).
@@ -205,7 +205,7 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
   отвечает на запрос метаданных, БД отвечает на `SELECT 1`. Проверки брокера и БД ограничены 2 с; результат пробы брокера
   кэшируется на 5 с.
 
-**Что видно в статусе контейнера.** Healthcheck в `compose.yml` направлен на `/health/live` (дешёвая проверка без
+**Что видно в статусе контейнера.** Healthcheck в `docker-compose.yml` направлен на `/health/live` (дешёвая проверка без
 обращения к брокеру и БД). Следствия:
 
 - `unhealthy` в `docker compose ps` означает `loop_stalled` (цикл приёма завис) или `consumer_fatal_error`;
@@ -314,7 +314,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
   зависшем брокере может удлинить остановку сверх `Shutdown__TimeoutSeconds`; тогда Docker остановит процесс по
   `stop_grace_period` (SIGKILL), данные не теряются, пачка придёт повторно.
 - **Q2.** Для неразобранного сообщения `Source` и `SourceEventId` в логе отбраковки = `null`.
-- **Q3.** `stop_grace_period` >= `Shutdown__TimeoutSeconds` + 5 с (запас host); в `compose.yml` принято 40 с (30 + 5 + 5 запас).
+- **Q3.** `stop_grace_period` >= `Shutdown__TimeoutSeconds` + 5 с (запас host); в `docker-compose.yml` принято 40 с (30 + 5 + 5 запас).
 - Прочие решения, на которые стоит оглянуться: `DataSaver__Postgres__SslMode` по умолчанию `Require`; потолок backoff
   жёсткий (30 с после джиттера); `Resume` партиций выполняется перед commit offset (ADR-0002, D-7).
 
@@ -326,6 +326,6 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 - Логи при недоступном Kafka: ошибки клиента (`Kafka client error`) и нативные сообщения librdkafka (в `ILogger`, не в
   stderr) идут с троттлингом - не чаще одной строки на причину в 30 с на тип сообщения. Объём в минуту на стенде после
   троттлинга не измерялся (**уточнить**); он ограничен числом различных причин, а не частотой попыток переподключения.
-  Лог контейнера в `compose.yml` ограничен `json-file`, `max-size: 10m`, `max-file: 3` (до 30 МБ): старые строки
+  Лог контейнера в `docker-compose.yml` ограничен `json-file`, `max-size: 10m`, `max-file: 3` (до 30 МБ): старые строки
   вытесняются, то есть более ранние `Critical`/`Error` могут пропасть из `docker compose logs` - при разборе инцидента
   снимайте лог сразу.

@@ -14,7 +14,7 @@
 
 ## What Changes
 
-- Разовый контейнер `migrate` в `deploy/data-saver/compose.yml`: выполняет `db/migrations/V*.sql` скриптом-обёрткой
+- Разовый контейнер `migrate` в `deploy/data-saver/docker-compose.yml`: выполняет `db/migrations/V*.sql` скриптом-обёрткой
   через `psql` под `ktm_migrator` и завершается. Образ - официальный `postgres:16-alpine` (фиксированный тег),
   собственного образа нет, `db/` и скрипт монтируются только на чтение.
 - Сервис `data-saver` получает `depends_on: migrate: condition: service_completed_successfully`: стартует только после
@@ -44,7 +44,7 @@ compose не стартует) - обновляется инструкция з�
 
 ## Impact
 
-- **Код/конфигурация**: `deploy/data-saver/compose.yml` (сервис `migrate`, `secrets`, `depends_on`),
+- **Код/конфигурация**: `deploy/data-saver/docker-compose.yml` (сервис `migrate`, `secrets`, `depends_on`),
   `deploy/data-saver/migrate/migrate.sh` (новый), `.env.example` (без секретов; при необходимости переменная таймаута
   блокировки), тестовый проект `Ktm.DataSaver.IntegrationTests` (новый тест). Код Data Saver не меняется.
 - **Данные**: схема не меняется. `ktm_migrator` получает пароль (ручной шаг администратора, как и для `ktm_app`).
@@ -55,7 +55,7 @@ compose не стартует) - обновляется инструкция з�
 
 ## Dependencies
 
-- `add-data-saver-core`: `db/migrations/V001`, `deploy/data-saver/compose.yml` (задачи 9.1/9.4), ADR-0004, интеграционные
+- `add-data-saver-core`: `db/migrations/V001`, `deploy/data-saver/docker-compose.yml` (задачи 9.1/9.4), ADR-0004, интеграционные
   тесты и фикстура Testcontainers. Ветка `feature/data-saver-migrate-job` создана от `feature/data-saver-core`;
   порядок слияния: сначала core.
 

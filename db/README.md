@@ -37,7 +37,7 @@ psql -v ON_ERROR_STOP=1 -U postgres -d ktm_revisor -f db/init/001_roles_and_exte
 
 ### Миграции: контейнер `migrate` (основной путь)
 
-В `deploy/data-saver/compose.yml` разовый контейнер `migrate` (образ `postgres:16.16-alpine3.24`, `db/` монтируется только на
+В `deploy/data-saver/docker-compose.yml` разовый контейнер `migrate` (образ `postgres:16.16-alpine3.24`, `db/` монтируется только на
 чтение) выполняет `db/migrations/V*.sql` под `ktm_migrator` и завершается; `data-saver` стартует только после его успешного
 завершения (ADR-0004, раздел 5). Подробно - `docs/manuals/data-saver.md`.
 
