@@ -1,0 +1,6 @@
+# Нормализация окончаний строк: в репозитории (индексе) всегда LF.
+* text=auto eol=lf
+
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.sln text eol=crlf

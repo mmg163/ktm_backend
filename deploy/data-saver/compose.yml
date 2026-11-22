@@ -1,0 +1,48 @@
+# Data Saver (ADR-0002). Запуск из каталога deploy/data-saver:
+#   cp .env.example .env            # заполнить значения; .env в git не попадает
+#   mkdir -p secrets && printf '%s' '<пароль ktm_app>' > secrets/ktm_app_password
+#   sudo chown 1654:1654 secrets/ktm_app_password && chmod 0400 secrets/ktm_app_password   # 1654 - uid пользователя контейнера
+#   (0444 - только альтернатива, если chown невозможен: файл станет читаем любому локальному пользователю хоста)
+#   docker compose up -d --build
+# Контекст сборки - корень репозитория (Core.csproj встраивает docs/api, design Р-10а).
+services:
+  data-saver:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ktm-data-saver:local
+    restart: unless-stopped
+    # Настройки DataSaver__* - из .env; секрет БД - только файлом (DataSaver__Postgres__PasswordFile в .env).
+    env_file: .env
+    secrets:
+      - ktm_app_password
+    # Связан с DataSaver__Shutdown__TimeoutSeconds (30 по умолчанию): 30 + 5 с запас host + 5 с запас = 40 (ADR-0002 D-8,
+    # решение Q3). Иначе SIGKILL придёт раньше предела остановки. При увеличении Shutdown__TimeoutSeconds увеличить и это.
+    stop_grace_period: 40s
+    # Лог контейнера ограничен (при недоступном Kafka клиент шумит): старые строки вытесняются.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Образ без curl: HTTP-запрос к /health/live через bash /dev/tcp. Выбран live, а не ready: unhealthy = loop_stalled
+    # (зависший цикл приёма). Недоступность БД/Kafka (ready = 503) в статусе контейнера не видна - смотреть
+    # /health/ready напрямую (docs/manuals/data-saver.md). Docker unhealthy-контейнер не перезапускает.
+    # Проверка дешёвая (без обращения к брокеру и БД, без кэша), поэтому короткие timeout/start_period.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/$${DataSaver__Health__Port:-8080} &&
+          printf 'GET /health/live HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 &&
+          head -n 1 <&3 | grep -q ' 200 '
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+secrets:
+  ktm_app_password:
+    file: ./secrets/ktm_app_password
