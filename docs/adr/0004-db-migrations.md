@@ -85,7 +85,7 @@ db/README.md                            порядок применения, к�
 
 Расширение п. 2, а не замена: файлы, их правила и роли не меняются; меняется исполнитель.
 
-- В `deploy/data-saver/compose.yml` добавляется разовый сервис `migrate` (`restart: "no"`): образ официальный
+- В `deploy/data-saver/docker-compose.yml` добавляется разовый сервис `migrate` (`restart: "no"`): образ официальный
   `postgres:16.16-alpine3.24` (конкретный тег; плавающий `16-alpine` не используется) (лицензия PostgreSQL License, бесплатно; нужен только `psql` 16), скрипт-обёртка
   `deploy/data-saver/migrate/migrate.sh` и `db/` монтируются только на чтение. Собственного образа нет.
 - `data-saver` стартует после `migrate` (`depends_on: condition: service_completed_successfully`) и остаётся под `ktm_app`

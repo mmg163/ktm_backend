@@ -11,7 +11,7 @@ namespace Ktm.DataSaver.IntegrationTests.Postgres;
 /// <summary>Контейнер TimescaleDB в общей сети с роботом миграций: роли и пароль есть, миграций нет (их накатывает скрипт).</summary>
 public sealed class MigrateScriptFixture : IAsyncLifetime
 {
-    // Образ клиента - тот же тег, что у сервиса migrate в deploy/data-saver/compose.yml: при смене тега менять в обоих местах.
+    // Образ клиента - тот же тег, что у сервиса migrate в deploy/data-saver/docker-compose.yml: при смене тега менять в обоих местах.
     public const string ClientImage = "postgres:16.16-alpine3.24";
 
     // Пароль со спецсимволами: ':' и '\' требуют экранирования в .pgpass, пробел проверяет отсутствие обрезки.

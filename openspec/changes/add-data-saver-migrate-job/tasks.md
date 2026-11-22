@@ -1,7 +1,7 @@
 # Tasks
 
 Код пишет роль `developer`; после каждой группы - `reviewer`. Чекбокс отмечается, когда поведение реализовано целиком
-и проверка из задачи проходит. Запуск тестов - `$run-tests`. Файлы конфигурации (`compose.yml`, `.env.example`,
+и проверка из задачи проходит. Запуск тестов - `$run-tests`. Файлы конфигурации (`docker-compose.yml`, `.env.example`,
 csproj) тестами не покрываются; тесты - только на поведение `migrate.sh`.
 
 ## 0. Предусловия
@@ -25,7 +25,7 @@ csproj) тестами не покрываются; тесты - только н
 
 ## 3. Compose и образ
 
-- [x] 3.1 Сервис `migrate` в `deploy/data-saver/compose.yml`: образ `postgres:<фиксированный тег>-alpine`, `restart: "no"`, `entrypoint: ["sh", "/migrate/migrate.sh"]`, тома `../../db:/db:ro` и `./migrate:/migrate:ro`, `env_file: .env`, `secrets: ktm_migrator_password`, `user: "1654:1654"`, `read_only: true`, `tmpfs: /tmp`, `logging` как у сервиса; замерить размер образа (`docker images`) и записать в `design.md` (Р-2); проверка - `docker compose config` валиден, `docker compose run --rm migrate` на тестовой БД даёт код 0, пароль не виден в `docker inspect`/`ps`/логе
+- [x] 3.1 Сервис `migrate` в `deploy/data-saver/docker-compose.yml`: образ `postgres:<фиксированный тег>-alpine`, `restart: "no"`, `entrypoint: ["sh", "/migrate/migrate.sh"]`, тома `../../db:/db:ro` и `./migrate:/migrate:ro`, `env_file: .env`, `secrets: ktm_migrator_password`, `user: "1654:1654"`, `read_only: true`, `tmpfs: /tmp`, `logging` как у сервиса; замерить размер образа (`docker images`) и записать в `design.md` (Р-2); проверка - `docker compose config` валиден, `docker compose run --rm migrate` на тестовой БД даёт код 0, пароль не виден в `docker inspect`/`ps`/логе
 - [x] 3.2 `data-saver`: `depends_on: migrate: condition: service_completed_successfully`; секрет `ktm_migrator_password` (`file: ./secrets/ktm_migrator_password`) объявлен и подключён только к `migrate`; шапка compose обновлена (создание секрета, chown 1654 + 0400); выяснить и записать в руководство поведение `up -d` на завершённом `migrate` (Р-1); проверка - на тестовой БД: успешная миграция -> `data-saver` стартует; сломанный `V*.sql` (временный каталог) -> `docker compose up -d` возвращает ошибку, `data-saver` не создан, `docker compose logs migrate` показывает ошибку
 - [x] 3.3 `.env.example`: переменная `MIGRATE_LOCK_TIMEOUT_SECONDS` (закомментирована, с умолчанием), пояснение, что пароль мигратора в `.env` не кладётся; без тестов на файл; проверка - ревью: в `.env.example` нет секретов
 
