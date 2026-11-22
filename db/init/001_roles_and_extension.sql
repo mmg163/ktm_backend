@@ -46,7 +46,10 @@ GRANT USAGE ON SCHEMA ktm TO ktm_app;
 -- В public выполняется именно REVOKE CREATE, а не REVOKE ALL (docs/design/Схема_БД_ER.md п. 5): функции TimescaleDB
 -- лежат в public, и ktm_migrator нужен USAGE, чтобы вызывать create_hypertable и др. В PG15+ CREATE у PUBLIC уже отозван
 -- по умолчанию; здесь фиксируем явно для кластеров, где public создан иначе.
+-- USAGE на public выдаётся ktm_migrator явно: расширение timescaledb лежит в public, а USAGE у PUBLIC обычно есть по умолчанию
+-- (PG15+), но на стендах с hardening может быть отозван. Только ktm_migrator: не ktm_app и не PUBLIC. GRANT идемпотентен.
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO ktm_migrator;
 
 -- Таблицы, которые создаст ktm_migrator в схеме ktm, автоматически доступны ktm_app только на SELECT, INSERT.
 ALTER DEFAULT PRIVILEGES FOR ROLE ktm_migrator IN SCHEMA ktm GRANT SELECT, INSERT ON TABLES TO ktm_app;
