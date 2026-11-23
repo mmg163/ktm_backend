@@ -79,6 +79,20 @@ public sealed class RuleRejectionObservabilityTests
     }
 
     [Fact]
+    public async Task Rule_rejection_does_not_notify_administrator()
+    {
+        using var meter = new Meter("test-" + Guid.NewGuid());
+        using var collector = new Collector(meter);
+        var logger = new FakeLogger<ObservedRejectionPublisher>();
+        RejectedMessage[] batch = [RuleRejected(), RuleRejected(), RuleRejected()];
+
+        await new ObservedRejectionPublisher(new FakePublisher(RejectionPublishResult.Success), new DataSaverMetrics(meter), logger).PublishAsync(batch, default);
+
+        Assert.Equal(3, collector.ByKey["ktm.datasaver.messages.rejected[reason=rule_matched]"]);
+        Assert.DoesNotContain(collector.ByKey.Keys, k => k.StartsWith("ktm.datasaver.admin_notifications", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Format_rejection_still_logs_error_and_does_not_increase_rule_counter()
     {
         using var meter = new Meter("test-" + Guid.NewGuid());

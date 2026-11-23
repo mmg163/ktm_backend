@@ -24,6 +24,9 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
 {
     public const int MaxDepth = 8;
     public const int MaxNodes = 64;
+
+    /// <summary>Логический размер условия: байты UTF-8 текста JSON. Та же мера в БД: <c>octet_length(condition::text)</c> (V002).</summary>
+    public const int MaxConditionBytes = 16384;
     public const string RootPath = "condition";
 
     public const int MaxNameLength = 200;
@@ -77,6 +80,15 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
     public ConditionCompileResult Compile(JsonElement condition)
     {
         var state = new State();
+        if (condition.ValueKind != JsonValueKind.Undefined
+            && System.Text.Encoding.UTF8.GetByteCount(condition.GetRawText()) > MaxConditionBytes)
+        {
+            // Содержимое условия в сообщение не попадает (ПДн/секреты в значениях).
+            state.Errors.Add(RuleErrors.Format(RootPath, $"размер условия превышает {MaxConditionBytes} байт (UTF-8 текст JSON)"));
+            return new ConditionCompileResult(null, state.Errors);
+        }
+
+
         var root = CompileNode(condition, RootPath, 1, state);
         return state.Errors.Count == 0 && root is not null
             ? new ConditionCompileResult(root, state.Errors)

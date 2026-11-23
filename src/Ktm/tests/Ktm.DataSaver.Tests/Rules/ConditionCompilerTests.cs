@@ -31,6 +31,78 @@ public class ConditionCompilerTests
         Assert.StartsWith(expected, Assert.Single(Errors(condition)));
     }
 
+    /// <summary>
+    /// Допустимое условие (or из 40 сравнений, литералы до 1000 символов) ровно в <paramref name="bytes"/> байт UTF-8;
+    /// jsonb-форма, как condition::text в БД (": " после ключей, ", " между элементами).
+    /// </summary>
+    private static string ConditionOfBytes(int bytes, char pad)
+    {
+        const int leaves = 40;
+        const int literalCap = 1000;
+        const string head = "{\"==\": [{\"var\": \"eventType\"}, \"";
+        const string tail = "\"]}";
+        const string separator = ", ";
+        var structure = "{\"or\": [".Length + "]}".Length + (leaves - 1) * separator.Length + leaves * (head.Length + tail.Length);
+        var free = bytes - structure;
+        var padBytes = System.Text.Encoding.UTF8.GetByteCount(pad.ToString());
+        var wide = free / padBytes;
+        var ascii = free - wide * padBytes;
+        var chars = new string(pad, wide) + new string('a', ascii);
+        var parts = new List<string>();
+        for (var i = 0; i < leaves; i++)
+        {
+            var take = Math.Min(literalCap, Math.Max(0, chars.Length - i * literalCap));
+            parts.Add(head + chars.Substring(Math.Min(i * literalCap, chars.Length), take) + tail);
+        }
+
+        return "{\"or\": [" + string.Join(separator, parts) + "]}";
+    }
+
+    [Fact]
+    public void ConditionSize_IsMeasuredInUtf8Bytes_ExactLimitAccepted_OneOverRejectedWithoutContent()
+    {
+        var limit = ConditionCompiler.MaxConditionBytes;
+        var exact = ConditionOfBytes(limit, 'a');
+        Assert.Equal(limit, System.Text.Encoding.UTF8.GetByteCount(exact));
+        Assert.DoesNotContain("\":\"", exact);
+        Assert.DoesNotContain("\",\"", exact);
+        Assert.True(new ConditionCompiler().Compile(Json(exact)).Succeeded);
+
+        var over = ConditionOfBytes(limit + 1, 'a');
+        Assert.Equal(limit + 1, System.Text.Encoding.UTF8.GetByteCount(over));
+        var result = new ConditionCompiler().Compile(Json(over));
+        Assert.False(result.Succeeded);
+        var error = Assert.Single(result.Errors);
+        Assert.StartsWith("condition: размер условия превышает 16384", error);
+        Assert.DoesNotContain("aaaa", error);
+
+        // меньше 16384 символов, но больше 16384 байт: мера - байты
+        var multibyte = ConditionOfBytes(limit + 1, 'н');
+        Assert.True(multibyte.Length < limit);
+        Assert.Equal(limit + 1, System.Text.Encoding.UTF8.GetByteCount(multibyte));
+        Assert.False(new ConditionCompiler().Compile(Json(multibyte)).Succeeded);
+        var multibyteExact = ConditionOfBytes(limit, 'н');
+        Assert.Equal(limit, System.Text.Encoding.UTF8.GetByteCount(multibyteExact));
+        Assert.True(new ConditionCompiler().Compile(Json(multibyteExact)).Succeeded);
+    }
+
+    [Fact]
+    public void OversizedCondition_MakesOnlyThatRuleInvalid_OthersStayCompiled()
+    {
+        var rules = new[]
+        {
+            Rule("good"),
+            Rule("huge", condition: ConditionOfBytes(ConditionCompiler.MaxConditionBytes + 1, 'a')),
+        };
+
+        var snapshot = new RuleSnapshotBuilder(new ConditionCompiler()).Build("rev", rules, []);
+
+        Assert.Equal("good", Assert.Single(snapshot.Rules).Definition.Id);
+        var error = Assert.Single(snapshot.Errors);
+        Assert.Equal("huge", error.RuleId);
+        Assert.DoesNotContain("aaaa", error.Reason);
+    }
+
     [Fact]
     public void Errors_AreCollectedFromAllBranches_AndNothingThrows()
     {

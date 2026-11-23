@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS ktm.rejection_rules (
     CONSTRAINT ck_rejection_rules_id      CHECK (rule_id ~ '^[A-Za-z0-9._:-]{1,128}$'),   -- формат ktm-reject-rule-id
     CONSTRAINT ck_rejection_rules_name    CHECK (length(btrim(name)) BETWEEN 1 AND 200),
     CONSTRAINT ck_rejection_rules_source  CHECK (length(source) BETWEEN 1 AND 32),
-    CONSTRAINT ck_rejection_rules_cond    CHECK (jsonb_typeof(condition) = 'object' AND pg_column_size(condition) <= 16384),
+    CONSTRAINT ck_rejection_rules_cond    CHECK (jsonb_typeof(condition) = 'object' AND octet_length(condition::text) <= 16384),
     CONSTRAINT ck_rejection_rules_reason  CHECK (reason_code ~ '^[a-z][a-z0-9_]{0,63}$'
                                                  AND reason_code NOT IN ('malformed_json','unknown_schema_version','invalid_schema')),
     CONSTRAINT ck_rejection_rules_prio    CHECK (priority BETWEEN 0 AND 10000),
@@ -214,8 +214,21 @@ GRANT SELECT ON ktm.rejection_rules TO ktm_app;
 - `priority` - детерминированный порядок вычисления (п. 2.8); меньше = раньше.
 - `version` - простая колонка (решение лида: без триггера): автор увеличивает её при правке условия или причины. Уходит в
   `ktm-reject-rule-version`. Мягкая защита: сервис пишет Warning, если содержимое правила изменилось, а `version` прежняя (п. 2.10).
-- Лимит размера условия 16 КиБ - страховка БД; грамматику и лимиты глубины/узлов проверяет компилятор (второй источник правды в
-  PL/pgSQL не заводим; CHECK проверяет только тип и размер jsonb).
+- Лимит размера условия 16 КиБ - **логическая** длина (решение лида 2026-11-23): `octet_length(condition::text) <= 16384`, то есть
+  байты нормализованного текста `jsonb` (после `:` и `,` стоит пробел, ключи упорядочены базой), а не размер хранения
+  (`pg_column_size` не используется: он зависит от внутреннего представления и сжатия). Единица - UTF-8 байт при условии, что
+  **база данных создана в кодировке UTF8** (требование развёртывания, `db/README.md`): `octet_length` считает байты в кодировке
+  сервера. Решение: `octet_length` и требование UTF8. Альтернатива `convert_to(condition::text, 'UTF8')` допустима и снимает
+  требование кодировки; рассматривается при необходимости (сейчас не вводим: при UTF8-базе результат тот же, а ограничение проще).
+  Компилятор повторяет проверку: он считает UTF-8 байты `GetRawText()` переданного `JsonElement`. **Предусловие компилятора:**
+  условие передано в jsonb-форме (текст из БД: так его и читает `NpgsqlRuleSource`, единственный производственный источник).
+  Для произвольно отформатированного JSON (без пробелов после `:` и `,`, либо с лишними) мера компилятора может быть меньше
+  или больше меры БД; такой ввод в производственном пути не встречается, а в тестах границу задают текстом в jsonb-форме.
+  Рабочий смысл: БД - страховка и единственный авторитет по размеру при записи, компилятор - ошибка правила с понятным текстом
+  при чтении (если CHECK снят или обойдён). Согласованность мер на ASCII-границе закреплена интеграционным тестом: условие ровно в 16384 байта
+  jsonb-текста принимается и БД, и компилятором (`NpgsqlRuleSourceTests`). Для многобайтовых символов совпадение мер держится на
+  UTF8-кодировке БД (требование развёртывания) и отдельным тестом не закреплено. Грамматику и лимиты глубины/узлов проверяет
+  компилятор (второй источник правды в PL/pgSQL не заводим; CHECK проверяет только тип и размер текста условия).
 - `created_at`/`updated_at`/`updated_by` не заводятся: без триггера они врали бы (отложено вместе с обвязкой, приложение A).
 
 **JSON Schema условия** `docs/api/rejection-condition.schema.json` (`$id`: `https://ktm.local/schemas/rejection-condition/v1.json`)
@@ -255,7 +268,7 @@ ktm_app`, затем `GRANT SELECT TO ktm_app`. Data Saver правила тол
 Трёхаргументные `<`, `>`, `>=` (в JsonLogic: `<` - исключающий диапазон) в первой итерации не принимаются: ошибка правила.
 Исключающий диапазон записывается через `and` с `<` и `>`; «вне диапазона» - `or(<, >)` или `{"!": диапазон}` (отличие - п. 2.6).
 
-Вложенность произвольная в пределах лимитов: глубина до 8, узлов-операторов до 64, длина условия до 16 КиБ.
+Вложенность произвольная в пределах лимитов: глубина до 8, узлов-операторов до 64, длина условия до 16 КиБ (16384 байта нормализованного jsonb-текста `condition::text` в UTF8-базе; предусловие компилятора - jsonb-форма входа, п. 2.3).
 
 Пример (видео: слишком низкая уверенность либо значение вне допустимого диапазона):
 
@@ -681,7 +694,7 @@ ORDER BY priority, rule_id` под `ktm_app` (читаются **все** стр
 12. `!=` - строгое отрицание `==` (отсутствующее поле «не равно»); зафиксировать в документации; `is_empty`/`missing`-подобный оператор -
     первыми в очереди расширений. `!` оставлен.
 13. Пути в стиле `var` JsonLogic (`payload.items.1.code`), без `*` и ключей с точкой; первый сегмент проверяется по полям конверта v1.
-14. Лимиты: 500 правил, глубина 8, 64 узла, строка значения 1024 символа, условие 16 КиБ.
+14. Лимиты: 500 правил, глубина 8, 64 узла, строка значения 1024 символа, условие 16 КиБ (логическая длина: 16384 байта нормализованного `condition::text` в UTF8-базе, п. 2.3).
 15. (принято по умолчанию) Правки правил идут под `ktm_migrator` (владелец схемы) до появления отдельной роли.
 
 ---
@@ -726,7 +739,7 @@ CREATE TABLE IF NOT EXISTS ktm.rejection_rules (
     CONSTRAINT ck_rejection_rules_id      CHECK (rule_id ~ '^[A-Za-z0-9._:-]{1,128}$'),   -- формат ktm-reject-rule-id
     CONSTRAINT ck_rejection_rules_name    CHECK (length(btrim(name)) BETWEEN 1 AND 200),
     CONSTRAINT ck_rejection_rules_source  CHECK (source IS NULL OR length(source) BETWEEN 1 AND 32),
-    CONSTRAINT ck_rejection_rules_cond    CHECK (jsonb_typeof(condition) = 'object' AND pg_column_size(condition) <= 16384),
+    CONSTRAINT ck_rejection_rules_cond    CHECK (jsonb_typeof(condition) = 'object' AND octet_length(condition::text) <= 16384),
     CONSTRAINT ck_rejection_rules_reason  CHECK (reason_code ~ '^[a-z][a-z0-9_]{0,63}$'
                                                  AND reason_code NOT IN ('malformed_json','unknown_schema_version','invalid_schema')),
     CONSTRAINT ck_rejection_rules_prio    CHECK (priority BETWEEN 0 AND 10000)
@@ -744,7 +757,8 @@ CREATE TABLE IF NOT EXISTS ktm.rejection_rules (
 - `priority` - детерминированный порядок вычисления (п. 2.7); меньше = раньше.
 - `version` и `updated_*` ведёт триггер, вручную их не правят; `version` уходит в заголовок `ktm-reject-rule-version`
   (зарезервирован ADR-0003 п. 2.4).
-- Лимит размера условия 16 КиБ (страховка БД; лимиты разбора - п. 2.3).
+- Лимит размера условия 16 КиБ (страховка БД; логическая длина `octet_length(condition::text)`, как в п. 2.3 ред. 3; единица - UTF-8 байт при
+  обязательной UTF8-кодировке БД; `convert_to(condition::text,'UTF8')` допустима как альтернатива, снимающая требование кодировки, сейчас не используется; лимиты разбора - п. 2.3).
 
 **Аудит (инвариант «изменение правила попадает в аудит»).** Таблица `ktm.rejection_rule_audit`
 (`audit_id bigint generated always as identity`, `rule_id`, `action` (`insert`/`update`/`delete`), `old_row jsonb`,

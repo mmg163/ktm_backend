@@ -87,6 +87,27 @@ public sealed class RejectionRulesSchemaTests(PostgresFixture db)
     }
 
     [Fact]
+    public async Task Condition_size_limit_is_logical_text_length_not_storage_size()
+    {
+        await using var connection = await OpenMigratorAsync();
+
+        // jsonb-текст нормализован: {"k": "<pad>"}; доводим до ровно 16384 байт UTF-8.
+        static string Condition(int textBytes) => "{\"k\": \"" + new string('a', textBytes - 9) + "\"}";
+        // сжимаемое (хранится в TOAST-сжатом виде заметно меньше 16 КиБ), но по тексту больше лимита
+        var exact = Condition(16384);
+        var over = Condition(16385);
+
+        Assert.Equal("16384", await ScalarAsync(connection, $"SELECT octet_length('{exact}'::jsonb::text)"));
+        await ExecuteAsync(connection, Insert("sz-exact", condition: exact));
+
+        var ex = await Assert.ThrowsAsync<PostgresException>(async () => await ExecuteAsync(connection, Insert("sz-over", condition: over)));
+        Assert.Equal("23514", ex.SqlState);
+        Assert.Equal("ck_rejection_rules_cond", ex.ConstraintName);
+
+        await ExecuteAsync(connection, "DELETE FROM ktm.rejection_rules WHERE rule_id = 'sz-exact'");
+    }
+
+    [Fact]
     public async Task Insert_without_enabled_or_without_source_is_rejected_because_there_is_no_default()
     {
         await using var connection = await OpenMigratorAsync();

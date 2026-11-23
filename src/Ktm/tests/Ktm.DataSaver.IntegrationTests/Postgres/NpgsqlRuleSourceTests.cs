@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Npgsql;
 using NpgsqlTypes;
@@ -81,6 +82,54 @@ public sealed class NpgsqlRuleSourceTests(PostgresFixture db)
         finally
         {
             await AsMigratorAsync("DELETE FROM ktm.rejection_rules WHERE rule_id IN ('src-own', 'src-common')");
+        }
+    }
+
+    /// <summary>Допустимое условие (or из 40 сравнений) ровно в <paramref name="bytes"/> байт UTF-8 в jsonb-форме, как condition::text в БД.</summary>
+    private static string JsonbConditionOfBytes(int bytes)
+    {
+        const int leaves = 40;
+        const int literalCap = 1000;
+        const string head = "{\"==\": [{\"var\": \"eventType\"}, \"";
+        const string tail = "\"]}";
+        const string separator = ", ";
+        var structure = "{\"or\": [".Length + "]}".Length + (leaves - 1) * separator.Length + leaves * (head.Length + tail.Length);
+        var chars = new string('a', bytes - structure);
+        var parts = new List<string>();
+        for (var i = 0; i < leaves; i++)
+        {
+            var start = Math.Min(i * literalCap, chars.Length);
+            parts.Add(head + chars.Substring(start, Math.Min(literalCap, chars.Length - start)) + tail);
+        }
+
+        return "{\"or\": [" + string.Join(separator, parts) + "]}";
+    }
+
+    [Fact]
+    public async Task Condition_of_exactly_16384_jsonb_bytes_is_stored_read_and_compiled()
+    {
+        var condition = JsonbConditionOfBytes(ConditionCompiler.MaxConditionBytes);
+        Assert.Equal(16384, ConditionCompiler.MaxConditionBytes);
+        await using (var connection = new NpgsqlConnection(db.MigratorConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var check = new NpgsqlCommand($"SELECT octet_length('{condition}'::jsonb::text) = 16384", connection);
+            Assert.True((bool)(await check.ExecuteScalarAsync())!);
+        }
+
+        await InsertAsync("max-size-rule", "n", null, "skud", condition, "r", enabled: true);
+        try
+        {
+            var result = await new NpgsqlRuleSource(db.AppDataSource).ReadAsync(null, CancellationToken.None);
+
+            var rule = Assert.Single(result.Rules, r => r.Id == "max-size-rule");
+            var snapshot = new RuleSnapshotBuilder(new ConditionCompiler()).Build(result.Revision, [rule], []);
+            Assert.Empty(snapshot.Errors);
+            Assert.Equal("max-size-rule", Assert.Single(snapshot.Rules).Definition.Id);
+        }
+        finally
+        {
+            await AsMigratorAsync("DELETE FROM ktm.rejection_rules WHERE rule_id = 'max-size-rule'");
         }
     }
 

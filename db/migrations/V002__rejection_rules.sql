@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS ktm.rejection_rules (
     CONSTRAINT ck_rejection_rules_id      CHECK (rule_id ~ '^[A-Za-z0-9._:-]{1,128}$'),
     CONSTRAINT ck_rejection_rules_name    CHECK (length(btrim(name)) BETWEEN 1 AND 200),
     CONSTRAINT ck_rejection_rules_source  CHECK (length(source) BETWEEN 1 AND 32),
-    CONSTRAINT ck_rejection_rules_cond    CHECK (jsonb_typeof(condition) = 'object' AND pg_column_size(condition) <= 16384),
+    -- Лимит 16 КиБ - логический (байты нормализованного текста jsonb; при обязательной UTF8-кодировке БД - UTF-8 байты),
+    -- не размер хранения со сжатием; та же мера в ConditionCompiler.MaxConditionBytes (вход в jsonb-форме).
+    CONSTRAINT ck_rejection_rules_cond    CHECK (jsonb_typeof(condition) = 'object' AND octet_length(condition::text) <= 16384),
     CONSTRAINT ck_rejection_rules_reason  CHECK (reason_code ~ '^[a-z][a-z0-9_]{0,63}$'
                                                  AND reason_code NOT IN ('malformed_json', 'unknown_schema_version', 'invalid_schema')),
     CONSTRAINT ck_rejection_rules_prio    CHECK (priority BETWEEN 0 AND 10000),

@@ -81,6 +81,18 @@ public class RulesHostTests
     }
 
     [Fact]
+    public void RefreshIntervalNotConfigured_DefaultsTo60Seconds_AndPassesStartup()
+    {
+        var values = Valid();
+        Assert.DoesNotContain("DataSaver:Rules:RefreshIntervalSeconds", values.Keys);
+        using var provider = Build(values);
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        Assert.Equal(60, provider.GetRequiredService<IOptions<RulesOptions>>().Value.RefreshIntervalSeconds);
+    }
+
+    [Fact]
     public void RulesEnabledByDefault_StageFollowsC5_AndLoaderStartsBeforeIngestion()
     {
         using var provider = BuildHost(Valid());
