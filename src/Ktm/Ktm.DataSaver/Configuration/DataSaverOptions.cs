@@ -1,3 +1,4 @@
+using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Microsoft.Extensions.Options;
@@ -90,6 +91,17 @@ public sealed class RulesOptions
 
     /// <summary>Предел числа применяемых правил (ограничение вычислений и кардинальности метрик).</summary>
     public int MaxRules { get; set; } = 500;
+
+    public const int MinRegexTimeoutMs = 1;
+    public const int MaxRegexTimeoutMs = 1000;
+    public const int MinMaxRegexNodes = 1;
+    public const int MaxMaxRegexNodes = 1000;
+
+    /// <summary>Предел времени одного совпадения regex, мс; превышение отбраковывает сообщение с кодом <c>rule_eval_timeout</c> (ADR-0005 п. 2.7).</summary>
+    public int RegexTimeoutMs { get; set; } = RegexPolicy.DefaultMatchTimeoutMs;
+
+    /// <summary>Предел числа узлов regex в наборе применяемых правил.</summary>
+    public int MaxRegexNodes { get; set; } = Ktm.DataSaver.Core.Rules.RuleSnapshotBuilder.DefaultMaxRegexNodes;
 }
 
 /// <summary>Проверка опций при старте: сообщение содержит имя настройки в форме окружения и никогда - значения секретов.</summary>
@@ -171,6 +183,15 @@ internal static class DataSaverChecks
         }
 
         if (o.MaxRules < 1) yield return $"{p}MaxRules must be at least 1.";
+        if (o.RegexTimeoutMs is < RulesOptions.MinRegexTimeoutMs or > RulesOptions.MaxRegexTimeoutMs)
+        {
+            yield return $"{p}RegexTimeoutMs must be in range {RulesOptions.MinRegexTimeoutMs}..{RulesOptions.MaxRegexTimeoutMs}.";
+        }
+
+        if (o.MaxRegexNodes is < RulesOptions.MinMaxRegexNodes or > RulesOptions.MaxMaxRegexNodes)
+        {
+            yield return $"{p}MaxRegexNodes must be in range {RulesOptions.MinMaxRegexNodes}..{RulesOptions.MaxMaxRegexNodes}.";
+        }
     }
 
     public static IEnumerable<string> Root(DataSaverOptions o)

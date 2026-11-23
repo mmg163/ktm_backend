@@ -4,7 +4,7 @@ namespace Ktm.DataSaver.Core.Rules;
 
 /// <summary>
 /// Листовая проверка, созданная оператором при загрузке правила. Потокобезопасна и не изменяется; вычисление не бросает исключений
-/// на любых данных сообщения.
+/// на любых данных сообщения (единственное исключение - прерывание по пределу совпадения <c>regex</c>, его обрабатывает стадия правил).
 /// </summary>
 public interface IPredicate
 {
@@ -106,9 +106,12 @@ internal sealed class NotNode(IConditionNode child) : IConditionNode
 }
 
 /// <summary>Скомпилированное правило: определение и корень условия.</summary>
-public sealed class CompiledRule(RuleDefinition definition, IConditionNode root)
+public sealed class CompiledRule(RuleDefinition definition, IConditionNode root, int regexNodeCount = 0)
 {
     public RuleDefinition Definition { get; } = definition;
+
+    /// <summary>Число листьев <c>regex</c> в условии (для лимита на набор).</summary>
+    public int RegexNodeCount { get; } = regexNodeCount;
 
     public bool Evaluate(JsonElement body) => root.Evaluate(body);
 

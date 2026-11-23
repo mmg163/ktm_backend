@@ -10,6 +10,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- Тестовый шов оператора regex (подмена фабрики Regex) и внутреннее исключение прерывания вычисления -->
+        <InternalsVisibleTo Include="Ktm.DataSaver.Tests" />
+        <InternalsVisibleTo Include="Ktm.DataSaver.IntegrationTests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- Одна копия правды: схема контракта лежит в docs/api и встраивается в сборку как есть. -->
         <EmbeddedResource Include="..\..\..\docs\api\kafka-event.schema.json"
                           LogicalName="Ktm.DataSaver.Core.Schemas.kafka-event.schema.json" />

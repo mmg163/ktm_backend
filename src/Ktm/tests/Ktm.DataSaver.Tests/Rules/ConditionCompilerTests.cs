@@ -13,7 +13,7 @@ public class ConditionCompilerTests
     [InlineData("""{"and":[{"==":[{"var":"source"},"cv"]}],"or":[]}""", "condition: узел должен содержать ровно один оператор, найдено 2")]
     [InlineData("""{"in":[{"var":"payload.a"},["x"]]}""", "condition: оператор \"in\" не поддерживается")]
     [InlineData("""{"missing":"payload.a"}""", "condition: оператор \"missing\" не поддерживается")]
-    [InlineData("""{"regex":[{"var":"payload.a"},"^x"]}""", "condition: оператор \"regex\" не поддерживается")]
+    [InlineData("""{"iregex":[{"var":"payload.a"},"^x"]}""", "condition: оператор \"iregex\" не поддерживается")]
     [InlineData("""{"if":[true,1,2]}""", "condition: оператор \"if\" не поддерживается")]
     [InlineData("""{"all":[{"==":[{"var":"source"},"cv"]}]}""", "condition: оператор \"all\" не поддерживается")]
     [InlineData("""{"and":[{"==":[{"var":"source"},"cv"]},{"in":[1,2]}]}""", "condition.and[1]: оператор \"in\" не поддерживается")]

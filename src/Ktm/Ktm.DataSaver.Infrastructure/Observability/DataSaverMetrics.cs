@@ -23,6 +23,7 @@ public sealed class DataSaverMetrics
 
     private readonly Counter<long> _ruleRejected;
     private readonly Counter<long> _ruleReloads;
+    private readonly Counter<long> _ruleEvalErrors;
     private readonly TimeProvider _time;
     private int _activeRules;
     private int _invalidRules;
@@ -33,6 +34,7 @@ public sealed class DataSaverMetrics
         Meter = meter;
         _time = time ?? TimeProvider.System;
         _ruleRejected = meter.CreateCounter<long>("ktm.datasaver.rules.rejected", "{message}", "Messages rejected by a rejection rule, by source and rule id");
+        _ruleEvalErrors = meter.CreateCounter<long>("ktm.datasaver.rules.eval_errors", "{message}", "Rule evaluations aborted by a limit (kind=regex_timeout), by kind and rule id");
         _ruleReloads = meter.CreateCounter<long>("ktm.datasaver.rules.reloads", "{attempt}", "Rule set load attempts, by result and trigger");
         meter.CreateObservableGauge("ktm.datasaver.rules.active", () => Volatile.Read(ref _activeRules), "{rule}", "Enabled rules in the current snapshot");
         meter.CreateObservableGauge("ktm.datasaver.rules.invalid", () => Volatile.Read(ref _invalidRules), "{rule}", "Enabled rules not applied because of an error");
@@ -67,6 +69,10 @@ public sealed class DataSaverMetrics
     /// <summary>Отбраковка правилом; <c>ruleId</c> берётся только из загруженного снимка, не из данных сообщения.</summary>
     public void RuleRejected(string source, string ruleId) =>
         _ruleRejected.Add(1, new KeyValuePair<string, object?>("source", source), new KeyValuePair<string, object?>("rule_id", ruleId));
+
+    /// <summary>Вычисление правила прервано по пределу (<c>kind</c> - <c>regex_timeout</c>); <c>ruleId</c> - из снимка правил.</summary>
+    public void RuleEvalError(string kind, string ruleId) =>
+        _ruleEvalErrors.Add(1, new KeyValuePair<string, object?>("kind", kind), new KeyValuePair<string, object?>("rule_id", ruleId));
 
     /// <summary>
     /// Попытка загрузки набора правил: <c>result</c> - changed/unchanged/failed, <c>trigger</c> - timer/startup.

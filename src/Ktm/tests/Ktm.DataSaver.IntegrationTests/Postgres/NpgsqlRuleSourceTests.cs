@@ -85,6 +85,36 @@ public sealed class NpgsqlRuleSourceTests(PostgresFixture db)
         }
     }
 
+    [Fact]
+    public async Task RegexExamplesOfV004_AreDisabled_ReadableByTheAppRole_AndARerunDoesNotOverwriteAnEditedExample()
+    {
+        var sql = await File.ReadAllTextAsync(Path.Combine(DatabaseProvisioner.RepositoryRoot(), "db", "migrations", "V004__rejection_rules_examples_regex.sql"));
+        try
+        {
+            var result = await new NpgsqlRuleSource(db.AppDataSource).ReadAsync(null, CancellationToken.None);
+
+            Assert.Empty(result.Problems);
+            foreach (var id in new[] { "skud-test-device", "skud-blank-person" })
+            {
+                var example = Assert.Single(result.Rules, r => r.Id == id);
+                Assert.False(example.Enabled);
+                Assert.Equal(1, example.Version);
+                Assert.Equal("skud", example.Source);
+            }
+
+            // Изменённый вручную пример повторный прогон не затирает (ON CONFLICT DO NOTHING).
+            await AsMigratorAsync("UPDATE ktm.rejection_rules SET enabled = true, version = 5, reason_code = 'edited_reason' WHERE rule_id = 'skud-test-device'");
+            await AsMigratorAsync(sql);
+
+            var again = Assert.Single((await new NpgsqlRuleSource(db.AppDataSource).ReadAsync(null, CancellationToken.None)).Rules, r => r.Id == "skud-test-device");
+            Assert.Equal((true, 5, "edited_reason"), (again.Enabled, again.Version, again.ReasonCode));
+        }
+        finally
+        {
+            await AsMigratorAsync("UPDATE ktm.rejection_rules SET enabled = false, version = 1, reason_code = 'test_device' WHERE rule_id = 'skud-test-device'");
+        }
+    }
+
     /// <summary>Допустимое условие (or из 40 сравнений) ровно в <paramref name="bytes"/> байт UTF-8 в jsonb-форме, как condition::text в БД.</summary>
     private static string JsonbConditionOfBytes(int bytes)
     {

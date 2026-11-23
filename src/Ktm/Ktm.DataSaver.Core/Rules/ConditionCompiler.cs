@@ -5,7 +5,7 @@ using Ktm.DataSaver.Core.Model;
 namespace Ktm.DataSaver.Core.Rules;
 
 /// <summary>Результат компиляции условия: корень либо список ошибок (формат <c>&lt;путь&gt;: &lt;причина&gt;</c>).</summary>
-public sealed record ConditionCompileResult(IConditionNode? Root, IReadOnlyList<string> Errors)
+public sealed record ConditionCompileResult(IConditionNode? Root, IReadOnlyList<string> Errors, int RegexNodeCount = 0)
 {
     public bool Succeeded => Errors.Count == 0 && Root is not null;
 }
@@ -61,9 +61,9 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
             errors.Add(RuleErrors.Format("source", $"неизвестный источник \"{rule.Source}\" (допустимы: skud, cv, 1c-do, *)"));
         }
 
-        if (rule.ReasonCode is RejectReasons.MalformedJson or RejectReasons.UnknownSchemaVersion or RejectReasons.InvalidSchema)
+        if (rule.ReasonCode is RejectReasons.MalformedJson or RejectReasons.UnknownSchemaVersion or RejectReasons.InvalidSchema or RejectReasons.RuleEvalTimeout)
         {
-            errors.Add(RuleErrors.Format("reason_code", "код причины зарезервирован за проверкой формата"));
+            errors.Add(RuleErrors.Format("reason_code", "код причины зарезервирован системой (проверка формата, прерывание вычисления)"));
         }
         else if (rule.ReasonCode is null || !ReasonCodeFormat.IsMatch(rule.ReasonCode))
         {
@@ -73,7 +73,7 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
         var condition = Compile(rule.Condition);
         errors.AddRange(condition.Errors);
         return errors.Count == 0
-            ? new RuleCompileResult(new CompiledRule(rule, condition.Root!), errors)
+            ? new RuleCompileResult(new CompiledRule(rule, condition.Root!, condition.RegexNodeCount), errors)
             : new RuleCompileResult(null, errors);
     }
 
@@ -91,7 +91,7 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
 
         var root = CompileNode(condition, RootPath, 1, state);
         return state.Errors.Count == 0 && root is not null
-            ? new ConditionCompileResult(root, state.Errors)
+            ? new ConditionCompileResult(root, state.Errors, state.RegexNodes)
             : new ConditionCompileResult(null, state.Errors);
     }
 
@@ -143,7 +143,16 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
         }
 
         var predicate = op!.Compile(operands, path, state.Errors);
-        return predicate is null ? null : new LeafNode(predicate);
+        if (predicate is null) return null;
+        if (predicate is IRegexPredicate && ++state.RegexNodes > RegexPolicy.MaxRegexNodesPerRule)
+        {
+            state.ReportOnce(
+                ref state.RegexNodesReported,
+                RuleErrors.Format(path, $"число узлов regex в правиле превышает {RegexPolicy.MaxRegexNodesPerRule}"));
+            return null;
+        }
+
+        return new LeafNode(predicate);
     }
 
     private IConditionNode? CompileLogical(string key, JsonElement operands, string path, int depth, State state)
@@ -198,6 +207,8 @@ public sealed class ConditionCompiler(OperatorRegistry registry)
         public int Nodes;
         public bool DepthReported;
         public bool NodesReported;
+        public int RegexNodes;
+        public bool RegexNodesReported;
 
         public void ReportOnce(ref bool flag, string message)
         {

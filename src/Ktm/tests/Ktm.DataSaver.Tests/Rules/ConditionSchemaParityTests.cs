@@ -69,6 +69,19 @@ public class ConditionSchemaParityTests
         { """{"<":[{"var":"payload.c"},null]}""", false },
         { """{"==":[{"var":"payload.c"},[1]]}""", false },
         { """[]""", false },
+        { """{"regex":[{"var":"deviceId"},"^TEST-"]}""", true },
+        { """{"regex":[{"var":"payload.s"},"(?i)^test-\\d+\\z"]}""", true },
+        { """{"and":[{"regex":[{"var":"deviceId"},"^TEST-"]},{"or":[{"!":{"regex":[{"var":"payload.s"},"(?i)^x"]}},{"regex":[{"var":"externalPersonId"},"^\\s*\\z"]}]}]}""", true },
+        { """{"!":[{"regex":[{"var":"deviceId"},"^a"]}]}""", true },
+        { """{"regex":[{"var":"deviceId"},"a","b"]}""", false },
+        { """{"regex":["^a",{"var":"deviceId"}]}""", false },
+        { """{"regex":[{"var":"deviceId"},{"var":"payload.s"}]}""", false },
+        { """{"regex":[{"var":"deviceId"},5]}""", false },
+        { """{"regex":[{"var":"deviceId"},null]}""", false },
+        { """{"regex":[{"var":"deviceId"},""]}""", false },
+        { $$"""{"regex":[{"var":"deviceId"},"{{new string('a', 513)}}"]}""", false },
+        { """{"regex":[{"var":"deviceId"},"^a"],"==":[{"var":"source"},"cv"]}""", false },
+        { """{"regex":{"var":"deviceId"}}""", false },
     };
 
     [Theory]
@@ -91,6 +104,11 @@ public class ConditionSchemaParityTests
         { "65 узлов", FlatAnd(64) },
         { "число вне decimal", """{"<":[{"var":"payload.c"},1e400]}""" },
         { "строка длиннее 1024", $$"""{"==":[{"var":"payload.c"},"{{new string('a', 1025)}}"]}""" },
+        { "regex: незакрытая группа", """{"regex":[{"var":"deviceId"},"("]}""" },
+        { "regex: просмотр вперёд", """{"regex":[{"var":"deviceId"},"(?=a)"]}""" },
+        { "regex: обратная ссылка", """{"regex":[{"var":"deviceId"},"(a)\\1"]}""" },
+        { "regex: слишком большой автомат", """{"regex":[{"var":"deviceId"},"(a{1000}){1000}"]}""" },
+        { "regex: 9 узлов в правиле", "{\"or\":[" + string.Join(",", Enumerable.Repeat("""{"regex":[{"var":"deviceId"},"^a"]}""", 9)) + "]}" },
     };
 
     [Theory]
@@ -108,7 +126,19 @@ public class ConditionSchemaParityTests
         Assert.True(SchemaAccepts(FlatAnd(63)) && CompilerAccepts(FlatAnd(63)));
     }
 
-    // --- 2.9: примеры V003 ---
+    [Fact]
+    public void RegexPatternOf512Characters_IsAcceptedByBoth_AndEightRegexNodesToo()
+    {
+        // maxLength схемы считает кодовые точки, компилятор - единицы UTF-16: расхождение возможно только на символах вне BMP,
+        // граница задаётся ASCII, поэтому здесь они совпадают.
+        var longest = $$"""{"regex":[{"var":"deviceId"},"{{new string('a', 512)}}"]}""";
+        var eight = "{\"or\":[" + string.Join(",", Enumerable.Repeat("""{"regex":[{"var":"deviceId"},"^a"]}""", 8)) + "]}";
+
+        Assert.True(SchemaAccepts(longest) && CompilerAccepts(longest));
+        Assert.True(SchemaAccepts(eight) && CompilerAccepts(eight));
+    }
+
+    // --- 2.9, 9.7: примеры V003 и V004 ---
 
     private static readonly Regex ExampleRow = new(
         @"\('(?<id>[^']+)',[\s\S]*?'(?<src>skud|cv|1c-do|\*)',\s*'(?<cond>\{[^\n]*\})'::jsonb,\s*'(?<reason>[^']+)',\s*(?<enabled>true|false)",
@@ -125,15 +155,33 @@ public class ConditionSchemaParityTests
         throw new FileNotFoundException(relative);
     }
 
-    [Fact]
-    public void ShippedExamples_AreDisabled_CompileWithoutErrors_AndPassTheSchema()
+    public static TheoryData<string, string[]> ExampleFiles => new()
     {
-        var sql = File.ReadAllText(RepositoryFile("db/migrations/V003__rejection_rules_examples.sql"));
+        {
+            "V003__rejection_rules_examples.sql",
+            ["1c-do-draft-document", "common-test-flag", "cv-confidence-out-of-range", "cv-low-confidence", "skud-stale-event", "skud-test-event"]
+        },
+        { "V004__rejection_rules_examples_regex.sql", ["skud-blank-person", "skud-test-device"] },
+    };
+
+    /// <summary>Каждый файл примеров <c>V*__rejection_rules_examples*.sql</c> учтён в списке: новый файл без записи в тесте падает.</summary>
+    [Fact]
+    public void EveryShippedExamplesFile_IsCoveredByTheTest()
+    {
+        var directory = Path.GetDirectoryName(RepositoryFile("db/migrations/V001__event_journal.sql"))!;
+        var files = Directory.GetFiles(directory, "V*__rejection_rules_examples*.sql").Select(Path.GetFileName).Order(StringComparer.Ordinal);
+
+        Assert.Equal(ExampleFiles.Select(row => (string)row[0]).Order(StringComparer.Ordinal), files);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExampleFiles))]
+    public void ShippedExamples_AreDisabled_CompileWithoutErrors_AndPassTheSchema(string file, string[] expectedIds)
+    {
+        var sql = File.ReadAllText(RepositoryFile("db/migrations/" + file));
         var rows = ExampleRow.Matches(sql);
 
-        Assert.Equal(
-            ["1c-do-draft-document", "common-test-flag", "cv-confidence-out-of-range", "cv-low-confidence", "skud-stale-event", "skud-test-event"],
-            rows.Select(m => m.Groups["id"].Value).Order(StringComparer.Ordinal));
+        Assert.Equal(expectedIds, rows.Select(m => m.Groups["id"].Value).Order(StringComparer.Ordinal));
 
         var compiler = new ConditionCompiler();
         foreach (Match row in rows)

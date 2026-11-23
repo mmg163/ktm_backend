@@ -89,4 +89,22 @@ public sealed class KafkaRuleRejectionHeadersTests
         Assert.False(message.Headers.TryGetLastBytes("ktm-reject-rule-version", out _));
         Assert.Equal(detail, Header(message, "ktm-reject-detail"));
     }
+
+    [Fact]
+    public void Regex_timeout_rejection_carries_the_system_reason_and_the_headers_of_the_rule_that_timed_out()
+    {
+        var info = new RejectionInfo(
+            RejectionKind.Rule, RejectReasons.RuleEvalTimeout,
+            "Вычисление правила «Медленное» (skud-slow, v2) прервано: превышен предел совпадения регулярного выражения (200 мс)",
+            "skud-slow", RuleName: "Медленное", RuleVersion: 2);
+
+        var message = KafkaRejectionPublisher.ToMessage(Rejected(info));
+
+        Assert.Equal("rule_eval_timeout", Header(message, "ktm-reject-reason"));
+        Assert.Equal("skud-slow", Header(message, "ktm-reject-rule-id"));
+        Assert.Equal("Медленное", Header(message, "ktm-reject-rule-name"));
+        Assert.Equal("2", Header(message, "ktm-reject-rule-version"));
+        Assert.Contains("(200 мс)", Header(message, "ktm-reject-detail"));
+        Assert.Equal(Body, message.Value);
+    }
 }

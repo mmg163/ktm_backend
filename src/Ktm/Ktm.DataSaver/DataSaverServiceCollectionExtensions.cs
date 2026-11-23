@@ -62,6 +62,11 @@ public static class DataSaverServiceCollectionExtensions
         {
             AddRules(services, root.GetSection("Rules"));
         }
+        else
+        {
+            // Публикатор отбракованных читает предел совпадения для записи в лог; без правил - значения по умолчанию, без проверки.
+            services.AddSingleton(RegexPolicy.Default);
+        }
 
         services.AddSingleton<IngestionPipeline>();
         services.AddSingleton<IWriteFailureHandler, BlockingWriteFailureHandler>();
@@ -90,7 +95,9 @@ public static class DataSaverServiceCollectionExtensions
         services.AddSingleton<IRejectionPublisher>(sp => new ObservedRejectionPublisher(
             sp.GetRequiredService<KafkaRejectionPublisher>(),
             sp.GetRequiredService<DataSaverMetrics>(),
-            sp.GetRequiredService<ILogger<ObservedRejectionPublisher>>()));
+            sp.GetRequiredService<ILogger<ObservedRejectionPublisher>>(),
+            sp.GetRequiredService<RegexPolicy>(),
+            sp.GetRequiredService<TimeProvider>()));
 
         services.AddSingleton(sp =>
         {
@@ -131,8 +138,13 @@ public static class DataSaverServiceCollectionExtensions
     private static void AddRules(IServiceCollection services, IConfiguration section)
     {
         AddOptions<RulesOptions>(services, section, DataSaverChecks.Rules);
-        services.AddSingleton<ConditionCompiler>();
-        services.AddSingleton(sp => new RuleSnapshotBuilder(sp.GetRequiredService<ConditionCompiler>(), sp.GetRequiredService<IOptions<RulesOptions>>().Value.MaxRules));
+        services.AddSingleton(sp => new RegexPolicy(TimeSpan.FromMilliseconds(sp.GetRequiredService<IOptions<RulesOptions>>().Value.RegexTimeoutMs)));
+        services.AddSingleton(sp => new ConditionCompiler(OperatorRegistry.CreateDefault(sp.GetRequiredService<RegexPolicy>())));
+        services.AddSingleton(sp =>
+        {
+            var rules = sp.GetRequiredService<IOptions<RulesOptions>>().Value;
+            return new RuleSnapshotBuilder(sp.GetRequiredService<ConditionCompiler>(), rules.MaxRules, rules.MaxRegexNodes);
+        });
         services.AddSingleton<RuleSnapshotHolder>();
         services.AddSingleton<IRuleSnapshotProvider>(sp => sp.GetRequiredService<RuleSnapshotHolder>());
         services.AddSingleton<IRuleSource, NpgsqlRuleSource>();

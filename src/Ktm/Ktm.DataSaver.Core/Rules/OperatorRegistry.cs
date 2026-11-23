@@ -35,16 +35,26 @@ public sealed class OperatorRegistry
 
     private readonly Dictionary<string, IRuleOperator> _operators = new(StringComparer.Ordinal);
 
-    /// <summary>Реестр первой итерации: <c>==</c>, <c>!=</c>, <c>&lt;</c>, <c>&lt;=</c> (два операнда или диапазон), <c>&gt;</c>, <c>&gt;=</c>.</summary>
-    public static OperatorRegistry CreateDefault()
+    /// <summary>Пределы <c>regex</c>, с которыми собран реестр; их же читает компилятор для лимита узлов в правиле.</summary>
+    public RegexPolicy RegexPolicy { get; private init; } = RegexPolicy.Default;
+
+    /// <summary>Реестр по умолчанию: <c>==</c>, <c>!=</c>, <c>&lt;</c>, <c>&lt;=</c> (два операнда или диапазон), <c>&gt;</c>, <c>&gt;=</c>, <c>regex</c>.</summary>
+    public static OperatorRegistry CreateDefault(RegexPolicy? regexPolicy = null) => CreateDefault(regexPolicy, null);
+
+    /// <summary>Тестовый шов: фабрика <see cref="System.Text.RegularExpressions.Regex"/> (откатный движок для проверки таймаута).</summary>
+    internal static OperatorRegistry CreateDefault(
+        RegexPolicy? regexPolicy,
+        Func<string, TimeSpan, System.Text.RegularExpressions.Regex>? regexFactory)
     {
-        var registry = new OperatorRegistry();
+        var policy = regexPolicy ?? RegexPolicy.Default;
+        var registry = new OperatorRegistry { RegexPolicy = policy };
         registry.Register(new EqualityOperator("==", negate: false));
         registry.Register(new EqualityOperator("!=", negate: true));
         registry.Register(new OrderOperator("<", OrderKind.Less));
         registry.Register(new OrderOperator("<=", OrderKind.LessOrEqual));
         registry.Register(new OrderOperator(">", OrderKind.Greater));
         registry.Register(new OrderOperator(">=", OrderKind.GreaterOrEqual));
+        registry.Register(new RegexOperator(policy, regexFactory));
         return registry;
     }
 

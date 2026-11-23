@@ -70,9 +70,14 @@ public sealed class RuleSnapshot
 internal readonly record struct RuleFingerprint(int Version, string Hash);
 
 /// <summary>Сборка снимка: правила компилируются по отдельности, ошибочное не влияет на остальные.</summary>
-public sealed class RuleSnapshotBuilder(ConditionCompiler compiler, int maxRules = RuleSnapshotBuilder.DefaultMaxRules)
+public sealed class RuleSnapshotBuilder(
+    ConditionCompiler compiler,
+    int maxRules = RuleSnapshotBuilder.DefaultMaxRules,
+    int maxRegexNodes = RuleSnapshotBuilder.DefaultMaxRegexNodes)
 {
     public const int DefaultMaxRules = 500;
+    /// <summary>Единственное место дефолта предела узлов <c>regex</c> в наборе; <c>RulesOptions.MaxRegexNodes</c> берёт его отсюда.</summary>
+    public const int DefaultMaxRegexNodes = 64;
 
     public RuleSnapshot Build(
         string revision,
@@ -104,6 +109,7 @@ public sealed class RuleSnapshotBuilder(ConditionCompiler compiler, int maxRules
         enabled.Sort(static (a, b) => a.Priority != b.Priority ? a.Priority.CompareTo(b.Priority) : string.CompareOrdinal(a.Id, b.Id));
 
         var compiled = new List<CompiledRule>(Math.Min(enabled.Count, maxRules));
+        var regexNodes = 0;
         foreach (var rule in enabled)
         {
             if (compiled.Count >= maxRules)
@@ -113,9 +119,15 @@ public sealed class RuleSnapshotBuilder(ConditionCompiler compiler, int maxRules
             }
 
             var result = compiler.Compile(rule);
-            if (result.Succeeded)
+            if (result.Succeeded && regexNodes + result.Rule!.RegexNodeCount > maxRegexNodes)
             {
-                compiled.Add(result.Rule!);
+                // Правило, на котором исчерпан предел набора, не применяется; следующие с меньшим числом узлов могут поместиться.
+                errors.Add(new RuleSnapshotError(rule.Id, rule.Version, $"превышен предел MaxRegexNodes={maxRegexNodes}: правило не применяется"));
+            }
+            else if (result.Succeeded)
+            {
+                regexNodes += result.Rule!.RegexNodeCount;
+                compiled.Add(result.Rule);
             }
             else
             {

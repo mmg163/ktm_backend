@@ -68,7 +68,8 @@ public class OperatorRegistryTests
     [InlineData("<=")]
     [InlineData(">")]
     [InlineData(">=")]
-    public void DefaultRegistry_HasExactlyTheFirstIterationOperators(string key)
+    [InlineData("regex")]
+    public void DefaultRegistry_HasTheFirstIterationOperatorsAndRegex(string key)
     {
         Assert.True(OperatorRegistry.CreateDefault().TryGet(key, out _));
     }
@@ -76,7 +77,7 @@ public class OperatorRegistryTests
     [Theory]
     [InlineData("in")]
     [InlineData("missing")]
-    [InlineData("regex")]
+    [InlineData("iregex")]
     [InlineData("if")]
     [InlineData("+")]
     [InlineData("and")]

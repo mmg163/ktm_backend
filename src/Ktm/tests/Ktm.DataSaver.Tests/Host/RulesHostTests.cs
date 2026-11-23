@@ -55,6 +55,10 @@ public class RulesHostTests
     [InlineData("RefreshIntervalSeconds", "3601")]
     [InlineData("RefreshIntervalSeconds", "0")]
     [InlineData("MaxRules", "0")]
+    [InlineData("RegexTimeoutMs", "0")]
+    [InlineData("RegexTimeoutMs", "1001")]
+    [InlineData("MaxRegexNodes", "0")]
+    [InlineData("MaxRegexNodes", "1001")]
     public void RulesSettingOutOfRange_FailsStartupNamingTheSetting(string setting, string value)
     {
         var values = Valid();
@@ -78,6 +82,50 @@ public class RulesHostTests
         provider.GetRequiredService<IStartupValidator>().Validate();
 
         Assert.Equal(int.Parse(seconds), provider.GetRequiredService<IOptions<RulesOptions>>().Value.RefreshIntervalSeconds);
+    }
+
+    [Theory]
+    [InlineData("RegexTimeoutMs", "1")]
+    [InlineData("RegexTimeoutMs", "1000")]
+    [InlineData("MaxRegexNodes", "1")]
+    [InlineData("MaxRegexNodes", "1000")]
+    public void RegexSettingsWithinBounds_PassStartup_AndReachThePolicyAndTheBuilder(string setting, string value)
+    {
+        var values = Valid();
+        values[$"DataSaver:Rules:{setting}"] = value;
+        using var provider = Build(values);
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        var options = provider.GetRequiredService<IOptions<RulesOptions>>().Value;
+        Assert.Equal(setting == "RegexTimeoutMs" ? int.Parse(value) : 200, (int)provider.GetRequiredService<RegexPolicy>().MatchTimeout.TotalMilliseconds);
+        Assert.Equal(setting == "MaxRegexNodes" ? int.Parse(value) : 64, options.MaxRegexNodes);
+    }
+
+    [Fact]
+    public void RegexSettings_DefaultTo200MsAnd64Nodes()
+    {
+        using var provider = Build(Valid());
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        var options = provider.GetRequiredService<IOptions<RulesOptions>>().Value;
+        Assert.Equal((200, 64), (options.RegexTimeoutMs, options.MaxRegexNodes));
+        Assert.Equal(TimeSpan.FromMilliseconds(200), provider.GetRequiredService<RegexPolicy>().MatchTimeout);
+    }
+
+    [Fact]
+    public void RulesDisabled_RegexSettingsAreNotValidated_AndThePolicyFallsBackToDefaults()
+    {
+        var values = Valid();
+        values["DataSaver:Rules:Enabled"] = "false";
+        values["DataSaver:Rules:RegexTimeoutMs"] = "0";
+        values["DataSaver:Rules:MaxRegexNodes"] = "5000";
+        using var provider = Build(values);
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        Assert.Equal(RegexPolicy.Default, provider.GetRequiredService<RegexPolicy>());
     }
 
     [Fact]
