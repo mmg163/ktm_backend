@@ -13,6 +13,7 @@ SQL-скрипты схемы `ktm` (журнал событий Data Saver). Р
 | `migrations/V001__event_journal.sql` | `ktm_migrator` | `ktm.events` (hypertable, чанк 7 суток), `ktm.event_corrections`, индексы, триггеры неизменяемости (UPDATE/DELETE и TRUNCATE), сжатие (30 суток), `REVOKE/GRANT` |
 | `migrations/V002__rejection_rules.sql` | `ktm_migrator` | таблица правил отбраковки `ktm.rejection_rules` (ADR-0005): CHECK-и, `ktm_app` - только `SELECT`; триггеров, аудита и `NOTIFY` нет |
 | `migrations/V003__rejection_rules_examples.sql` | `ktm_migrator` | шесть **выключенных** примеров правил (`skud`, `cv`, `1c-do`, общее `*`); `INSERT ... ON CONFLICT (rule_id) DO NOTHING` |
+| `migrations/V004__rejection_rules_examples_regex.sql` | `ktm_migrator` | два **выключенных** примера правил с оператором `regex` (`skud-test-device`, `skud-blank-person`); `INSERT ... ON CONFLICT (rule_id) DO NOTHING` |
 
 ## Правила
 
@@ -110,7 +111,7 @@ should be used for segmenting or ordering` - информационные соо
 
 ## Правила отбраковки (`ktm.rejection_rules`)
 
-Таблица создаётся `V002`, примеры - `V003` (решения - `docs/adr/0005-data-saver-rules-engine.md`). Условие правила - jsonb в нотации
+Таблица создаётся `V002`, примеры - `V003` и `V004` (примеры с `regex`) (решения - `docs/adr/0005-data-saver-rules-engine.md`). Условие правила - jsonb в нотации
 JsonLogic (`docs/api/rejection-condition.schema.json`); столбцы `source` и `enabled` обязательны (значения по умолчанию нет),
 `source = '*'` - правило для всех источников. Сервис (`ktm_app`) правила только читает (`SELECT`); `INSERT`/`UPDATE`/`DELETE` ему
 запрещены (`insufficient_privilege`).
@@ -140,8 +141,13 @@ UPDATE ktm.rejection_rules
 UPDATE ktm.rejection_rules SET enabled = false, version = version + 1 WHERE rule_id = 'skud-test-event';
 ```
 
-**Примеры выключают, не удаляют.** `V003` выполняется при каждом прогоне `migrate`: удалённый пример (`DELETE`) вернётся выключенным,
+**Примеры выключают, не удаляют.** `V003` и `V004` выполняются при каждом прогоне `migrate`: удалённый пример (`DELETE`) вернётся выключенным,
 а изменённый вручную (`enabled`, `condition`, `version`) повторный прогон не затирает (`ON CONFLICT DO NOTHING`).
+
+**Примеры `regex` (`V004`) выключены, и шаблон выключенного правила не проверяется до включения:** база шаблон не разбирает, сервис
+компилирует только включённые правила. Неверный или не поддерживаемый шаблон (`(`, просмотр вперёд/назад, обратные ссылки) проявится при
+включении как ошибка этого правила (Error в логе с `rule_id`, `rules.invalid`), остальные правила работают. В JSON внутри обычной
+SQL-строки обратная косая записывается удвоенной (`"^\\s*\\z"` в SQL - это `^\s*\z` в шаблоне); `E''` не нужен.
 
 ## Проверка
 
