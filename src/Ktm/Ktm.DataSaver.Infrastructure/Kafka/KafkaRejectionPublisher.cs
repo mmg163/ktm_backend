@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Confluent.Kafka;
 using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Core.Pipeline;
 using Microsoft.Extensions.Logging;
 
 namespace Ktm.DataSaver.Infrastructure.Kafka;
@@ -95,7 +96,12 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
     }
 
     internal const string RuleIdHeader = "ktm-reject-rule-id";
+    // Лимиты длины заголовков - в UTF-16 code units (string.Length), не в байтах и не в графемах.
     internal const int RuleIdMaxLength = 128;
+    internal const string RuleNameHeader = "ktm-reject-rule-name";
+    internal const string RuleVersionHeader = "ktm-reject-rule-version";
+    internal const int RuleNameMaxLength = 256;
+    internal const int DetailMaxLength = 1024;
 
     internal static Message<byte[], byte[]> ToMessage(RejectedMessage r)
     {
@@ -106,7 +112,7 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
             Headers = new Headers
             {
                 { "ktm-reject-reason", Utf8(r.Info.Reason) },
-                { "ktm-reject-detail", Utf8(r.Info.Detail) },
+                { "ktm-reject-detail", Utf8(r.Info.Kind == RejectionKind.Rule ? Truncate(r.Info.Detail, DetailMaxLength) : r.Info.Detail) },
                 { "ktm-source-topic", Utf8(message.Topic) },
                 { "ktm-source-partition", Utf8(message.Partition.ToString(CultureInfo.InvariantCulture)) },
                 { "ktm-source-offset", Utf8(message.Offset.ToString(CultureInfo.InvariantCulture)) },
@@ -117,6 +123,21 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
         if (ruleId is not null)
         {
             result.Headers.Add(RuleIdHeader, Utf8(ruleId));
+        }
+
+        // Название и версия правила - только у отбраковки правилом; форматные отбраковки их не получают.
+        if (r.Info.Kind == RejectionKind.Rule)
+        {
+            var ruleName = Normalize(r.Info.RuleName, RuleNameMaxLength);
+            if (ruleName is not null)
+            {
+                result.Headers.Add(RuleNameHeader, Utf8(ruleName));
+            }
+
+            if (r.Info.RuleVersion is { } version)
+            {
+                result.Headers.Add(RuleVersionHeader, Utf8(version.ToString(CultureInfo.InvariantCulture)));
+            }
         }
 
         // Пустой ключ = ключа не было (consumer отдаёт null как пустой массив): сохраняем семантику.
@@ -132,21 +153,29 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
     /// Идентификатор правила для заголовка: trim, не длиннее 128 символов (без разрыва суррогатной пары);
     /// null, если идентификатора нет или он состоит из пробелов.
     /// </summary>
-    internal static string? NormalizeRuleId(string? ruleId)
+    internal static string? NormalizeRuleId(string? ruleId) => Normalize(ruleId, RuleIdMaxLength);
+
+    /// <summary>Trim и усечение до <paramref name="max"/> UTF-16 code units без разрыва суррогатной пары; null для пустого.</summary>
+    private static string? Normalize(string? value, int max)
     {
-        var value = ruleId?.Trim();
-        if (string.IsNullOrEmpty(value))
+        var trimmed = value?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
         {
             return null;
         }
 
-        if (value.Length > RuleIdMaxLength)
+        var result = Truncate(trimmed, max).TrimEnd();
+        return result.Length == 0 ? null : result;
+    }
+
+    private static string Truncate(string value, int max)
+    {
+        if (value.Length <= max)
         {
-            var length = char.IsHighSurrogate(value[RuleIdMaxLength - 1]) ? RuleIdMaxLength - 1 : RuleIdMaxLength;
-            value = value[..length].TrimEnd();
+            return value;
         }
 
-        return value.Length == 0 ? null : value;
+        return value[..(char.IsHighSurrogate(value[max - 1]) ? max - 1 : max)];
     }
 
     private static byte[] Utf8(string value) => Encoding.UTF8.GetBytes(value);

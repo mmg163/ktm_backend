@@ -11,8 +11,12 @@ public sealed class KafkaMessageSourceTests(KafkaFixture kafka)
 {
     private static readonly TimeSpan Overall = TimeSpan.FromSeconds(60);
 
-    private KafkaMessageSource NewSource(string topic, string group) =>
-        new(kafka.Options(topic, group), kafka.NewFatalHandler(), NullLogger<KafkaMessageSource>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
+    private KafkaMessageSource NewSource(string topic, string group)
+    {
+        var source = new KafkaMessageSource(kafka.Options(topic, group), kafka.NewFatalHandler(), NullLogger<KafkaMessageSource>.Instance, new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval));
+        source.Start();
+        return source;
+    }
 
     private static async Task<List<ConsumedMessage>> ReadAsync(KafkaMessageSource source, int count)
     {

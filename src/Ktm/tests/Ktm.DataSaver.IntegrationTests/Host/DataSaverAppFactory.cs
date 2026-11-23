@@ -46,6 +46,13 @@ internal sealed class DataSaverAppFactory(Dictionary<string, string?> settings, 
         // BackgroundService (остановка по таймауту при зависшем commit) падает с ObjectDisposedException.
         builder.ConfigureLogging(logging => logging.ClearProviders());
         builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings));
+        // Composition root читает часть настроек при регистрации служб (DataSaver:Rules:Enabled), до применения
+        // ConfigureAppConfiguration: UseSetting кладёт их в конфигурацию host-а с самого начала.
+        foreach (var (key, value) in settings)
+        {
+            if (value is not null) builder.UseSetting(key, value);
+        }
+
         if (configureServices is not null) builder.ConfigureTestServices(configureServices);
     }
 }

@@ -4,6 +4,9 @@ using Ktm.DataSaver.Core.Ingestion;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
 using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Tests.Decoding;
+using Ktm.DataSaver.Tests.Rules;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using static Ktm.DataSaver.Tests.Ingestion.Harness;
@@ -580,6 +583,26 @@ public class IngestionLoopTests
             Assert.DoesNotContain("0012345678", r.Message);
             Assert.All(r.StructuredState!, p => Assert.DoesNotContain("Иванов", p.Value ?? string.Empty));
         });
+    }
+
+    [Fact]
+    public async Task RuleRejection_IsPublishedNotWritten_AndItsOffsetIsCommittedLikeAWrittenOne()
+    {
+        var holder = RuleRejectionStageTests.HolderWith(RuleTestSupport.Rule(
+            "skud-test-event", condition: """{"==":[{"var":"eventType"},"test_event"]}"""));
+        var h = new Harness(3, new RuleRejectionStage(holder));
+        var testEvent = EventSamples.Message(
+            EventSamples.SkudWith(n => { n["sourceEventId"] = "e-0-1"; n["eventType"] = "test_event"; }), 0, 1);
+        h.Source.Enqueue(Valid(0, 0), testEvent, Valid(0, 2));
+        h.StopWhenQueueDrained();
+
+        await h.RunAsync();
+
+        Assert.Equal(["write", "publish", "commit"], h.Log);
+        Assert.Equal(["e-0-0", "e-0-2"], h.Store.Writes.Single());
+        Assert.Equal(["0@1"], h.Publisher.Published.Single());
+        Assert.Equal([new EventOrigin("skud", "e-0-1")], h.Publisher.Origins);
+        Assert.Equal([Next(0, 3)], h.Committer.Commits.Single());
     }
 
     [Fact]

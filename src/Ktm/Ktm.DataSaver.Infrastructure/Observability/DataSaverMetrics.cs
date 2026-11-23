@@ -21,9 +21,22 @@ public sealed class DataSaverMetrics
     private readonly Histogram<double> _batchDuration;
     private readonly Histogram<int> _batchSize;
 
-    public DataSaverMetrics(Meter meter)
+    private readonly Counter<long> _ruleRejected;
+    private readonly Counter<long> _ruleReloads;
+    private readonly TimeProvider _time;
+    private int _activeRules;
+    private int _invalidRules;
+    private long _lastCheckUnixMs = long.MinValue;
+
+    public DataSaverMetrics(Meter meter, TimeProvider? time = null)
     {
         Meter = meter;
+        _time = time ?? TimeProvider.System;
+        _ruleRejected = meter.CreateCounter<long>("ktm.datasaver.rules.rejected", "{message}", "Messages rejected by a rejection rule, by source and rule id");
+        _ruleReloads = meter.CreateCounter<long>("ktm.datasaver.rules.reloads", "{attempt}", "Rule set load attempts, by result and trigger");
+        meter.CreateObservableGauge("ktm.datasaver.rules.active", () => Volatile.Read(ref _activeRules), "{rule}", "Enabled rules in the current snapshot");
+        meter.CreateObservableGauge("ktm.datasaver.rules.invalid", () => Volatile.Read(ref _invalidRules), "{rule}", "Enabled rules not applied because of an error");
+        meter.CreateObservableGauge("ktm.datasaver.rules.snapshot_age", SnapshotAge, "s", "Seconds since the last successful check of the rule table");
         _read = meter.CreateCounter<long>("ktm.datasaver.messages.read", "{message}", "Messages read from the raw topic");
         _written = meter.CreateCounter<long>("ktm.datasaver.events.written", "{event}", "Events newly inserted into the journal");
         _duplicates = meter.CreateCounter<long>("ktm.datasaver.events.duplicates", "{event}", "Events skipped as already stored (idempotent redelivery)");
@@ -50,6 +63,39 @@ public sealed class DataSaverMetrics
 
     public void MessageRejected(string reason) =>
         _rejected.Add(1, new KeyValuePair<string, object?>("reason", reason));
+
+    /// <summary>Отбраковка правилом; <c>ruleId</c> берётся только из загруженного снимка, не из данных сообщения.</summary>
+    public void RuleRejected(string source, string ruleId) =>
+        _ruleRejected.Add(1, new KeyValuePair<string, object?>("source", source), new KeyValuePair<string, object?>("rule_id", ruleId));
+
+    /// <summary>
+    /// Попытка загрузки набора правил: <c>result</c> - changed/unchanged/failed, <c>trigger</c> - timer/startup.
+    /// Для changed и unchanged (успешная проверка таблицы) сбрасывает возраст снимка; failed его не трогает.
+    /// </summary>
+    public void RulesReloaded(string result, string trigger)
+    {
+        _ruleReloads.Add(1, new KeyValuePair<string, object?>("result", result), new KeyValuePair<string, object?>("trigger", trigger));
+        if (result is "changed" or "unchanged")
+        {
+            Interlocked.Exchange(ref _lastCheckUnixMs, _time.GetUtcNow().ToUnixTimeMilliseconds());
+        }
+    }
+
+    /// <summary>Состояние снимка после загрузки: включённых правил и не применённых из-за ошибки.</summary>
+    public void SetRulesState(int active, int invalid)
+    {
+        Volatile.Write(ref _activeRules, active);
+        Volatile.Write(ref _invalidRules, invalid);
+    }
+
+    private IEnumerable<Measurement<double>> SnapshotAge()
+    {
+        var last = Interlocked.Read(ref _lastCheckUnixMs);
+        if (last != long.MinValue)
+        {
+            yield return new Measurement<double>(Math.Max(0, (_time.GetUtcNow().ToUnixTimeMilliseconds() - last) / 1000.0));
+        }
+    }
 
     public void Retry(string stage) =>
         _retries.Add(1, new KeyValuePair<string, object?>("stage", stage));

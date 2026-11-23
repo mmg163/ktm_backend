@@ -64,4 +64,36 @@ public sealed class KafkaMessageSourceUnitTests
 
         Assert.Throws<ObjectDisposedException>(() => source.ProbeBroker(TimeSpan.FromMilliseconds(100)));
     }
+
+    [Fact]
+    public void Consumer_IsNotCreatedUntilStart_StartSubscribesOnce_DisposeBeforeStartIsSafe()
+    {
+        var builds = 0;
+        var source = new KafkaMessageSource(
+            new KafkaOptions { BootstrapServers = "localhost:1" },
+            new KafkaFatalErrorHandler(new NoopTerminator(), new FakeLogger<KafkaFatalErrorHandler>(), Throttle),
+            new FakeLogger<KafkaMessageSource>(), Throttle,
+            builder =>
+            {
+                builds++;
+                return builder.Build();
+            });
+
+        // До Start: consumer нет, источник пуст, проба связи честно отказывает, а не падает NullReference.
+        Assert.Equal(0, builds);
+        Assert.False(source.HasAssignment);
+        Assert.Empty(source.Assignment);
+        Assert.Throws<InvalidOperationException>(() => source.ProbeBroker(TimeSpan.FromMilliseconds(100)));
+
+        source.Start();
+        source.Start();
+        Assert.Equal(1, builds);
+
+        source.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => source.Start());
+
+        var neverStarted = Create();
+        neverStarted.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => neverStarted.Start());
+    }
 }

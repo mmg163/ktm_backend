@@ -17,7 +17,7 @@ public sealed class ConfigExitCodeTests
     };
 
     /// <summary>Запуск службы отдельным процессом: из окружения убираются все DataSaver__*, нужные задаются явно.</summary>
-    private static async Task<(int ExitCode, string Stderr, string Stdout)> RunAsync(Dictionary<string, string> environment)
+    internal static async Task<(int ExitCode, string Stderr, string Stdout)> RunAsync(Dictionary<string, string> environment)
     {
         var info = new ProcessStartInfo("dotnet")
         {

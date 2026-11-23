@@ -5,6 +5,7 @@ using Ktm.DataSaver.Core.Ingestion;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
 using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Health;
 using Ktm.DataSaver.Hosting;
 using Ktm.DataSaver.Infrastructure.Kafka;
@@ -55,6 +56,13 @@ public static class DataSaverServiceCollectionExtensions
         services.AddSingleton<FormatStage>();
         services.AddSingleton<IEventValidator, AcceptAllEventValidator>();
         services.AddSingleton<IIngestionStage, EventValidationStage>();
+        // Правила отбраковки: строго после C5 (ADR-0005 п. 2.8); Enabled=false - ничего из них не регистрируется.
+        var rulesEnabled = RulesEnabled(root.GetSection("Rules"));
+        if (rulesEnabled)
+        {
+            AddRules(services, root.GetSection("Rules"));
+        }
+
         services.AddSingleton<IngestionPipeline>();
         services.AddSingleton<IWriteFailureHandler, BlockingWriteFailureHandler>();
         services.AddSingleton<IAdminNotifier, LoggingAdminNotifier>();
@@ -70,6 +78,7 @@ public static class DataSaverServiceCollectionExtensions
             sp.GetRequiredService<KafkaFatalErrorHandler>(),
             sp.GetRequiredService<ILogger<KafkaMessageSource>>(),
             sp.GetRequiredService<LogThrottle>()));
+        services.AddSingleton<IConsumerLifecycle>(sp => sp.GetRequiredService<KafkaMessageSource>());
         services.AddSingleton<IMessageSource>(sp => new MeteredMessageSource(
             sp.GetRequiredService<KafkaMessageSource>(), sp.GetRequiredService<DataSaverMetrics>()));
         services.AddSingleton<IOffsetCommitter, KafkaOffsetCommitter>();
@@ -105,8 +114,50 @@ public static class DataSaverServiceCollectionExtensions
 
         services.AddSingleton<IHealthSignals, HealthSignals>();
         services.AddSingleton<HealthEvaluator>();
+        // Загрузка правил регистрируется раньше worker-а приёма (ADR-0005 п. 2.10).
+        if (rulesEnabled)
+        {
+            services.AddHostedService(sp => sp.GetRequiredService<RuleRefreshService>());
+        }
+
         services.AddHostedService<DataSaverWorker>();
         return services;
+    }
+
+    // Значение, которое не разбирается как bool, не отключает правила: об ошибке скажет проверка опций при старте.
+    private static bool RulesEnabled(IConfiguration rules) =>
+        !bool.TryParse(rules["Enabled"], out var enabled) || enabled;
+
+    private static void AddRules(IServiceCollection services, IConfiguration section)
+    {
+        AddOptions<RulesOptions>(services, section, DataSaverChecks.Rules);
+        services.AddSingleton<ConditionCompiler>();
+        services.AddSingleton(sp => new RuleSnapshotBuilder(sp.GetRequiredService<ConditionCompiler>(), sp.GetRequiredService<IOptions<RulesOptions>>().Value.MaxRules));
+        services.AddSingleton<RuleSnapshotHolder>();
+        services.AddSingleton<IRuleSnapshotProvider>(sp => sp.GetRequiredService<RuleSnapshotHolder>());
+        services.AddSingleton<IRuleSource, NpgsqlRuleSource>();
+        services.AddSingleton<RuleSnapshotRefresher>();
+        services.AddSingleton<IIngestionStage, RuleRejectionStage>();
+        services.AddSingleton(sp =>
+        {
+            var backoff = sp.GetRequiredService<IOptions<BackoffOptions>>().Value;
+            return new RuleRefreshService(
+                sp.GetRequiredService<RuleSnapshotRefresher>(),
+                sp.GetRequiredService<RuleSnapshotHolder>(),
+                TimeSpan.FromSeconds(sp.GetRequiredService<IOptions<RulesOptions>>().Value.RefreshIntervalSeconds),
+                // Своя политика: общая с циклом приёма не потокобезопасна.
+                new BackoffPolicy(
+                    TimeSpan.FromMilliseconds(backoff.InitialMs),
+                    TimeSpan.FromMilliseconds(backoff.MaxMs),
+                    backoff.Multiplier,
+                    backoff.JitterFraction,
+                    Random.Shared.NextDouble),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<DataSaverMetrics>(),
+                sp.GetRequiredService<IProcessTerminator>(),
+                sp.GetRequiredService<ILogger<RuleRefreshService>>(),
+                sp.GetService<IRuleChangeSignal>());
+        });
     }
 
     private static OptionsBuilder<T> AddOptions<T>(IServiceCollection services, IConfiguration section, Func<T, IEnumerable<string>> check)

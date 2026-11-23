@@ -1,5 +1,6 @@
 using Ktm.DataSaver.Configuration;
 using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Core.Rules;
 using Microsoft.Extensions.Options;
 
 namespace Ktm.DataSaver.Health;
@@ -31,13 +32,23 @@ public sealed record HealthResult(bool IsHealthy, string? Reason)
 }
 
 /// <summary>Правила D-10 ADR-0002. Недоступность БД liveness не роняет.</summary>
-public sealed class HealthEvaluator(IHealthSignals signals, IOptions<HealthOptions> options, TimeProvider time)
+public sealed class HealthEvaluator(
+    IHealthSignals signals,
+    IOptions<HealthOptions> options,
+    TimeProvider time,
+    RuleSnapshotHolder? rules = null)
 {
     public HealthResult Live()
     {
         if (signals.IsConsumerFatal)
         {
             return new HealthResult(false, "consumer_fatal_error");
+        }
+
+        // Цикл приёма ждёт первую загрузку правил (БД недоступна): отметок нет по замыслу, перезапуск это не лечит.
+        if (rules is { HasLoaded: false })
+        {
+            return new HealthResult(true, null);
         }
 
         var stale = TimeSpan.FromSeconds(options.Value.LiveStaleSeconds);
@@ -48,6 +59,12 @@ public sealed class HealthEvaluator(IHealthSignals signals, IOptions<HealthOptio
 
     public async ValueTask<HealthResult> ReadyAsync(CancellationToken cancellationToken)
     {
+        // Правила включены, но первая загрузка ещё не выполнена (пустая таблица - выполненная): приём не начат.
+        if (rules is { HasLoaded: false })
+        {
+            return new HealthResult(false, "rules_not_loaded");
+        }
+
         if (!signals.HasAssignment)
         {
             return new HealthResult(false, "no_partitions_assigned");
