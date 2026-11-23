@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktm.local/schemas/rejection-condition/v1.json",
+  "title": "KtmRejectionCondition v1",
+  "description": "Условие правила отбраковки Data Saver (поле condition таблицы ktm.rejection_rules, jsonb; ADR-0005). Запись в нотации JsonLogic (операторы and, or, !, ==, !=, <, <=, >, >=, var; диапазон - трёхаргументный <=, обе границы включительно), но принимается только подмножество, а вычисление строгое: типы не приводятся, отсутствующее поле условие не выполняет. Остальные поля правила (rule_id, name, source, reason_code, enabled, priority, version) - колонки таблицы и этой схемой не описываются. Схема - документ и подсказка для редактора; сервис проверяет условие при загрузке собственным компилятором, а тесты сверяют схему и компилятор. Семантику, которую схема выразить не может (даты только с зоной, нижняя граница диапазона не больше верхней и обе границы одного вида, глубина дерева не более 8, узлов не более 64), проверяет компилятор. Операции in, missing, регулярное выражение и прочие отложены (ADR-0005 п. 2.4) и в схему v1 не входят.",
+  "$ref": "#/$defs/node",
+  "$defs": {
+    "node": {
+      "description": "Узел условия: объект ровно с одним оператором - and, or, ! либо сравнение.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/and"
+        },
+        {
+          "$ref": "#/$defs/or"
+        },
+        {
+          "$ref": "#/$defs/not"
+        },
+        {
+          "$ref": "#/$defs/compare"
+        }
+      ]
+    },
+    "not": {
+      "description": "НЕ: отрицание узла; допустима запись с одним элементом в массиве, как в JsonLogic.",
+      "type": "object",
+      "required": [
+        "!"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "!": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/node"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "and": {
+      "description": "И (логическое, не побитовое): истинно, если истинны все узлы; массив непустой; вычисляется до первого ложного.",
+      "type": "object",
+      "required": [
+        "and"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "and": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      }
+    },
+    "or": {
+      "description": "ИЛИ (логическое, не побитовое): истинно, если истинен хотя бы один узел; массив непустой; вычисляется до первого истинного.",
+      "type": "object",
+      "required": [
+        "or"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "or": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      }
+    },
+    "path": {
+      "description": "Путь к полю тела сообщения как в docs/api/kafka-event-format.md (как var в JsonLogic): сегменты через точку; сегмент из цифр у массива - индекс. Первый сегмент - поле конверта v1.",
+      "type": "string",
+      "maxLength": 256,
+      "pattern": "^(schemaVersion|source|sourceEventId|occurredAt|eventType|deviceId|externalPersonId|payload|correction)(\\.[A-Za-z0-9_-]+)*$"
+    },
+    "var": {
+      "description": "Ссылка на поле сообщения. Только строка-путь: значение по умолчанию, пустой путь и путь-выражение не поддерживаются.",
+      "type": "object",
+      "required": [
+        "var"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "var": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "eqLiteral": {
+      "description": "Литерал для == и !=.",
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "ordLiteral": {
+      "description": "Литерал для <, <=, >, >= и границ диапазона: число либо дата RFC 3339 с зоной (зону проверяет сервис).",
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "range": {
+      "description": "Диапазон: [нижняя, var, верхняя], обе границы включительно (нижняя <= поле <= верхняя). Только оператор <=.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/ordLiteral"
+        },
+        {
+          "$ref": "#/$defs/var"
+        },
+        {
+          "$ref": "#/$defs/ordLiteral"
+        }
+      ]
+    },
+    "compare": {
+      "description": "Сравнение: ==, !=, <, <=, >, >= над var и литералом; трёхаргументный <= - диапазон с включительными границами.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "==": {
+          "description": "Ровно два операнда: один var, другой литерал (порядок любой; при литерале слева сравнение читается зеркально).",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/var"
+              },
+              {
+                "$ref": "#/$defs/eqLiteral"
+              }
+            ]
+          },
+          "contains": {
+            "$ref": "#/$defs/var"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        "!=": {
+          "description": "Ровно два операнда: один var, другой литерал (порядок любой; при литерале слева сравнение читается зеркально).",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/var"
+              },
+              {
+                "$ref": "#/$defs/eqLiteral"
+              }
+            ]
+          },
+          "contains": {
+            "$ref": "#/$defs/var"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        "<": {
+          "description": "Ровно два операнда: один var, другой литерал (порядок любой; при литерале слева сравнение читается зеркально).",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/var"
+              },
+              {
+                "$ref": "#/$defs/ordLiteral"
+              }
+            ]
+          },
+          "contains": {
+            "$ref": "#/$defs/var"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        ">": {
+          "description": "Ровно два операнда: один var, другой литерал (порядок любой; при литерале слева сравнение читается зеркально).",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/var"
+              },
+              {
+                "$ref": "#/$defs/ordLiteral"
+              }
+            ]
+          },
+          "contains": {
+            "$ref": "#/$defs/var"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        ">=": {
+          "description": "Ровно два операнда: один var, другой литерал (порядок любой; при литерале слева сравнение читается зеркально).",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/var"
+              },
+              {
+                "$ref": "#/$defs/ordLiteral"
+              }
+            ]
+          },
+          "contains": {
+            "$ref": "#/$defs/var"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        "<=": {
+          "oneOf": [
+            {
+              "description": "Ровно два операнда: один var, другой литерал (порядок любой; при литерале слева сравнение читается зеркально).",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/var"
+                  },
+                  {
+                    "$ref": "#/$defs/ordLiteral"
+                  }
+                ]
+              },
+              "contains": {
+                "$ref": "#/$defs/var"
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "$ref": "#/$defs/range"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
