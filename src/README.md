@@ -292,7 +292,7 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 - `docs/adr/0003-data-saver-validation-pipeline.md` - конвейер стадий и точка расширения под правила;
 - `docs/adr/0004-db-migrations.md` - миграции SQL-скриптами;
 - `docs/adr/0005-data-saver-rules-engine.md` - движок правил отбраковки (таблица правил, язык условий, опрос, контракт `rejected`, метрики);
-- `docs/rules-engine.md` - правила отбраковки для администратора: столбцы, синтаксис условий, SQL-команды, примеры;
+- `docs/manuals/rules-engine.md` - правила отбраковки для администратора: столбцы, синтаксис условий, SQL-команды, примеры;
 - `docs/api/rejection-condition.schema.json` - JSON Schema поля `condition` правила;
 - `docs/api/kafka-event-format.md`, `docs/api/kafka-event.schema.json` - формат сообщения;
 - `docs/design/Схема_БД_ER.md`, `db/README.md` - схема журнала и порядок применения;
@@ -326,4 +326,4 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
   для правила `messages.rejected{reason="rule_matched"}`. `rules.active` - применяемые правила (включённые и без ошибок).
 - **Настройки** - таблица в разделе 4. `DataSaver__Rules__Enabled=false` отключает правила без пересборки (нужен перезапуск процесса).
 
-Описание для администратора и примеры - `docs/rules-engine.md`; эксплуатация - `docs/manuals/data-saver.md`, п. 11.
+Описание для администратора и примеры - `docs/manuals/rules-engine.md`; эксплуатация - `docs/manuals/data-saver.md`, п. 11.
