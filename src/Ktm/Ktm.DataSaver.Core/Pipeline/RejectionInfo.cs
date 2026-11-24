@@ -1,6 +1,6 @@
 namespace Ktm.DataSaver.Core.Pipeline;
 
-/// <summary>Вид отбраковки. <see cref="Rule"/> зарезервирован под будущий движок правил (ADR-0003 п. 2.4).</summary>
+/// <summary>Вид отбраковки. <see cref="Rule"/> - отбраковка движком правил (ADR-0005).</summary>
 public enum RejectionKind
 {
     Format,
@@ -17,4 +17,6 @@ public sealed record RejectionInfo(
     string Reason,
     string Detail,
     string? RuleId = null,
-    string? TargetTopic = null);
+    string? TargetTopic = null,
+    string? RuleName = null,
+    int? RuleVersion = null);

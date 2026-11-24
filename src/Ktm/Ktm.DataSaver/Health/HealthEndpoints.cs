@@ -1,5 +1,8 @@
 namespace Ktm.DataSaver.Health;
 
+/// <summary>Тело ответа health-маршрутов; имена JSON status/reason (camelCase по умолчанию Results.Json).</summary>
+public sealed record HealthResponse(string Status, string? Reason);
+
 public static class HealthEndpoints
 {
     /// <summary>Два маршрута без аутентификации (внутренняя сеть, D-10); тело - только статус и фиксированный код причины.</summary>
@@ -13,6 +16,6 @@ public static class HealthEndpoints
 
     private static IResult ToResult(HealthResult result) =>
         Results.Json(
-            new { status = result.Status, reason = result.Reason },
+            new HealthResponse(result.Status, result.Reason),
             statusCode: result.IsHealthy ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 }

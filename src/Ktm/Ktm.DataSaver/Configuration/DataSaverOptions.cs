@@ -1,3 +1,4 @@
+using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Microsoft.Extensions.Options;
@@ -76,6 +77,33 @@ public sealed class TrustOptions
     }
 }
 
+/// <summary><c>DataSaver__Rules__*</c>: правила отбраковки (ADR-0005 п. 2.10).</summary>
+public sealed class RulesOptions
+{
+    public const int MinRefreshIntervalSeconds = 5;
+    public const int MaxRefreshIntervalSeconds = 3600;
+
+    /// <summary><c>false</c> - стадия правил и загрузчик не регистрируются, таблица не читается (аварийное отключение).</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Период опроса таблицы; изменение правил вступает в силу не позже него.</summary>
+    public int RefreshIntervalSeconds { get; set; } = 60;
+
+    /// <summary>Предел числа применяемых правил (ограничение вычислений и кардинальности метрик).</summary>
+    public int MaxRules { get; set; } = 500;
+
+    public const int MinRegexTimeoutMs = 1;
+    public const int MaxRegexTimeoutMs = 1000;
+    public const int MinMaxRegexNodes = 1;
+    public const int MaxMaxRegexNodes = 1000;
+
+    /// <summary>Предел времени одного совпадения regex, мс; превышение отбраковывает сообщение с кодом <c>rule_eval_timeout</c> (ADR-0005 п. 2.7).</summary>
+    public int RegexTimeoutMs { get; set; } = RegexPolicy.DefaultMatchTimeoutMs;
+
+    /// <summary>Предел числа узлов regex в наборе применяемых правил.</summary>
+    public int MaxRegexNodes { get; set; } = Ktm.DataSaver.Core.Rules.RuleSnapshotBuilder.DefaultMaxRegexNodes;
+}
+
 /// <summary>Проверка опций при старте: сообщение содержит имя настройки в форме окружения и никогда - значения секретов.</summary>
 internal sealed class OptionsValidator<T>(Func<T, IEnumerable<string>> check) : IValidateOptions<T>
     where T : class
@@ -144,6 +172,26 @@ internal static class DataSaverChecks
     public static IEnumerable<string> Shutdown(ShutdownOptions o)
     {
         if (o.TimeoutSeconds < 1) yield return "DataSaver__Shutdown__TimeoutSeconds must be at least 1.";
+    }
+
+    public static IEnumerable<string> Rules(RulesOptions o)
+    {
+        const string p = "DataSaver__Rules__";
+        if (o.RefreshIntervalSeconds is < RulesOptions.MinRefreshIntervalSeconds or > RulesOptions.MaxRefreshIntervalSeconds)
+        {
+            yield return $"{p}RefreshIntervalSeconds must be in range {RulesOptions.MinRefreshIntervalSeconds}..{RulesOptions.MaxRefreshIntervalSeconds}.";
+        }
+
+        if (o.MaxRules < 1) yield return $"{p}MaxRules must be at least 1.";
+        if (o.RegexTimeoutMs is < RulesOptions.MinRegexTimeoutMs or > RulesOptions.MaxRegexTimeoutMs)
+        {
+            yield return $"{p}RegexTimeoutMs must be in range {RulesOptions.MinRegexTimeoutMs}..{RulesOptions.MaxRegexTimeoutMs}.";
+        }
+
+        if (o.MaxRegexNodes is < RulesOptions.MinMaxRegexNodes or > RulesOptions.MaxMaxRegexNodes)
+        {
+            yield return $"{p}MaxRegexNodes must be in range {RulesOptions.MinMaxRegexNodes}..{RulesOptions.MaxMaxRegexNodes}.";
+        }
     }
 
     public static IEnumerable<string> Root(DataSaverOptions o)

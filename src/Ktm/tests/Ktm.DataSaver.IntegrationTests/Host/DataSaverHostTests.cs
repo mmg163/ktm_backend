@@ -78,6 +78,8 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
         var rejected = await kafka.CreateTopicAsync("ktm.events.rejected");
         await using var database = new PostgreSqlBuilder("timescale/timescaledb:2.32.1-pg16").Build();
         await database.StartAsync();
+        // Правила читаются при старте: БД без миграции V002 завершила бы процесс кодом 78 (задача 4.2).
+        await DatabaseProvisioner.ProvisionAsync(database.GetConnectionString());
         var db = new NpgsqlConnectionStringBuilder(database.GetConnectionString());
         await using var app = new DataSaverAppFactory(DataSaverAppFactory.Settings(kafka.BootstrapServers, raw, rejected, $"g-{Guid.NewGuid():N}", db));
         using var client = app.CreateClient();
@@ -142,6 +144,8 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
         await using var app = new DataSaverAppFactory(DataSaverAppFactory.Settings(
             kafka.BootstrapServers, $"ktm.events.missing.{Guid.NewGuid():N}", rejected, $"g-{Guid.NewGuid():N}", db));
         using var client = app.CreateClient();
+        // До первой загрузки правил приём не начат и причина готовности - rules_not_loaded (задача 4.3).
+        await Wait.UntilAsync(async () => !(await GetAsync(client, "/health/ready")).Body.Contains("rules_not_loaded", StringComparison.Ordinal), "first rule load");
 
         // Несколько секунд наблюдаем: проба брокера успешна, поэтому причина никогда не должна стать broker_unavailable.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);

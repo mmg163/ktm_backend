@@ -19,6 +19,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- Схема условия правил (docs/api) для сверки с компилятором условий -->
+        <EmbeddedResource Include="..\..\..\..\docs\api\rejection-condition.schema.json"
+                          LogicalName="Ktm.DataSaver.Tests.Schemas.rejection-condition.schema.json" />
+    </ItemGroup>
+
+    <ItemGroup>
         <ProjectReference Include="..\..\Ktm.DataSaver.Core\Ktm.DataSaver.Core.csproj" />
         <ProjectReference Include="..\..\Ktm.DataSaver.Infrastructure\Ktm.DataSaver.Infrastructure.csproj" />
         <ProjectReference Include="..\..\Ktm.DataSaver\Ktm.DataSaver.csproj" />

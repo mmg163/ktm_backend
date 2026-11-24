@@ -11,17 +11,20 @@
 
 ```
 адаптеры источников -> Kafka ktm.events.raw -> Data Saver -> PostgreSQL + TimescaleDB, таблица ktm.events
-                                                  |-> ktm.events.rejected (Kafka): сообщения, не прошедшие проверку формата
+                                                  |-> ktm.events.rejected (Kafka): не прошедшие проверку формата и подпавшие под правила отбраковки
                                                   '-> ktm.event_corrections: ссылки корректировок на исходные события
+                              правила отбраковки: таблица ktm.rejection_rules (читается опросом, только SELECT)
 ```
 
-- читает `ktm.events.raw`, проверяет сообщение по `docs/api/kafka-event.schema.json`, пишет пачками;
+- читает `ktm.events.raw`, проверяет сообщение по `docs/api/kafka-event.schema.json`, затем по правилам отбраковки из таблицы
+  `ktm.rejection_rules` (раздел 7), пишет пачками;
 - offset коммитится только после COMMIT в БД; идемпотентность гарантирует уникальный ключ
   `(source, source_event_id, occurred_at)`, а не код (`ON CONFLICT DO NOTHING`);
 - журнал неизменяем: сервис работает под ролью `ktm_app` (`SELECT, INSERT`), корректировки - отдельными записями;
 - недоступность БД или Kafka не теряет данные: пачка повторяется с нарастающей паузой, партиции стоят на паузе.
 
-Вне этого solution: REST API для фронтенда (`ktm_revisor`), ролевая интерпретация, движок правил, дашборды. Проект
+Вне этого solution: REST API для фронтенда (`ktm_revisor`), ролевая интерпретация, дашборды (правила отбраковки качества
+данных - внутри, раздел 7; правила интерпретации уровня 2 - вне). Проект
 `Ktm.Api` в solution - шаблонная заготовка (`/weatherforecast`), функционала не содержит.
 
 ## 2. Контекст системы
@@ -51,9 +54,10 @@ flowchart LR
     CV -.-> K
     DO -.-> K
     K -->|ktm.events.raw| DS
-    DS -->|не прошли проверку формата: ktm.events.rejected| K
+    DS -->|не прошли формат или сработало правило: ktm.events.rejected| K
     DS -->|пачками, идемпотентно| EV
     DS --> COR
+    RR[(ktm.rejection_rules)] -->|опрос, SELECT| DS
 ```
 
 Формат сообщения источников - `docs/api/kafka-event.schema.json`.
@@ -71,6 +75,7 @@ flowchart TB
 
     subgraph HOST[Ktm.DataSaver: Host]
         W[DataSaverWorker]
+        RS[RuleRefreshService]
         H[Health: /health/live, /health/ready]
         CFG[DataSaverOptions: DataSaver__*]
     end
@@ -80,15 +85,16 @@ flowchart TB
         KC[KafkaOffsetCommitter]
         KR[KafkaRejectionPublisher]
         NS[NpgsqlEventStore]
+        NR[NpgsqlRuleSource]
         OBS[Observability: метрики, логи]
     end
 
     subgraph CORE[Ktm.DataSaver.Core: домен и порты]
         LOOP[IngestionLoop]
         BT[Batcher + OffsetTracker]
-        PIPE[IngestionPipeline:<br/>FormatStage -> EventValidationStage C5]
+        PIPE[IngestionPipeline:<br/>FormatStage -> EventValidationStage C5<br/>-> RuleRejectionStage]
         RES[BackoffPolicy, WriteErrorClassifier]
-        PORTS{{Порты: IMessageSource, IEventStore,<br/>IRejectionPublisher, IOffsetCommitter,<br/>IEventValidator, IWriteFailureHandler}}
+        PORTS{{Порты: IMessageSource, IEventStore,<br/>IRejectionPublisher, IOffsetCommitter,<br/>IEventValidator, IWriteFailureHandler,<br/>IRuleSource, IRuleChangeSignal}}
     end
 
     W --> LOOP
@@ -104,10 +110,12 @@ flowchart TB
     KC -. реализует .-> PORTS
     KR -. реализует .-> PORTS
     NS -. реализует .-> PORTS
+    NR -. реализует .-> PORTS
     KS <--> K
     KC --> K
     KR --> K
     NS --> PG
+    NR --> PG
 ```
 
 Путь одной пачки (`IngestionLoop`):
@@ -115,7 +123,7 @@ flowchart TB
 ```mermaid
 flowchart LR
     A[poll: Consume<br/>PollIntervalMs] --> B[Batcher<br/>500 сообщений или 1 с<br/>от первого]
-    B --> C[Pipeline:<br/>формат, C5]
+    B --> C[Pipeline:<br/>формат, C5, правила]
     C -->|принято| D[запись в БД<br/>одна транзакция,<br/>ON CONFLICT DO NOTHING]
     C -->|отбраковано| E[публикация в<br/>ktm.events.rejected]
     D --> F[commit offset+1<br/>по партициям]
@@ -131,13 +139,14 @@ flowchart LR
 |---|---|---|
 | `Ktm.DataSaver.Core` | `Model`, `Decoding` | `ParsedEvent`, `ConsumedMessage`; `EventDecoder`: JSON -> событие, проверка схемы, UTC-микросекунды, причины отбраковки (`malformed_json`, `unknown_schema_version`, `invalid_schema`) |
 | | `Pipeline` | стадии `Accept`/`Reject`, `FormatStage`, порты `IEventValidator` (C5) и `IWriteFailureHandler` (C6) |
+| | `Rules` | движок правил отбраковки: `RuleDefinition`, язык условий (реестр операторов, `FieldPath`, `ConditionCompiler`), `RuleSnapshot`, `RuleRejectionStage`, порты `IRuleSource` и `IRuleChangeSignal` |
 | | `Batching` | `Batcher` (размер или время), `OffsetTracker` |
 | | `Resilience` | `BackoffPolicy`, `WriteErrorClassifier` (временная / конфигурационная / данные) |
 | | `Ingestion` | `IngestionLoop`, порты источника, хранилища, публикации, commit, `ISourceTrustProvider`, `IAdminNotifier` |
 | `Ktm.DataSaver.Infrastructure` | `Kafka` | consumer, producer `rejected` (идемпотентный, `acks=all`), commit, обработка фатальных ошибок, троттлинг логов librdkafka |
-| | `Postgres` | `NpgsqlEventStore` (пакетная запись, корректировки), `PostgresOptions`, `EnvironmentSourceTrustProvider` |
+| | `Postgres` | `NpgsqlEventStore` (пакетная запись, корректировки), `NpgsqlRuleSource` (чтение таблицы правил), `PostgresOptions`, `EnvironmentSourceTrustProvider` |
 | | `Observability` | метрики `System.Diagnostics.Metrics` (meter `Ktm.DataSaver`), декораторы портов, `LoggingAdminNotifier` |
-| `Ktm.DataSaver` | Host | composition root, `DataSaverWorker`, опции `DataSaver__*` с проверкой при старте, health (Kestrel), коды выхода |
+| `Ktm.DataSaver` | Host | composition root, `DataSaverWorker`, `RuleRefreshService` (первая загрузка и опрос таблицы правил; расположение в Host, а не в Infrastructure - решение лида: сервис использует internal `StartupErrors` и сопрягается с `DataSaverWorker`), опции `DataSaver__*` с проверкой при старте, health (Kestrel), коды выхода |
 | `Ktm.DataSaver.Tests` | unit | Core и host на fake-портах |
 | `Ktm.DataSaver.IntegrationTests` | интеграционные | Testcontainers: `apache/kafka` и `timescale/timescaledb` pg16; приёмочные, `Long`, `Perf` |
 | `Ktm.Api` | - | шаблонная заготовка, не относится к Data Saver |
@@ -212,6 +221,16 @@ producer `rejected` идемпотентный с `acks=all`.
 
 С умолчаниями правило выполняется: `max(1, 15 + 3 * 10, 30) = 45 < 60`.
 
+**Правила отбраковки** (раздел 7)
+
+| Переменная | По умолчанию | Назначение | Ограничения |
+|---|---|---|---|
+| `DataSaver__Rules__Enabled` | `true` | `false` - ни стадия, ни загрузчик правил не регистрируются, таблица не читается, остальные `Rules__*` не проверяются (аварийное отключение, нужен перезапуск) | `true`/`false` |
+| `DataSaver__Rules__RefreshIntervalSeconds` | `60` | период опроса таблицы правил | целое 5..3600 |
+| `DataSaver__Rules__MaxRules` | `500` | предел числа применяемых правил (успешно скомпилированных включённых); лишние не применяются, Error на каждое | целое >= 1, верхней границы нет |
+| `DataSaver__Rules__RegexTimeoutMs` | `200` | предел времени одного совпадения `regex`, мс; превышение отбраковывает сообщение с кодом `rule_eval_timeout` | целое 1..1000 |
+| `DataSaver__Rules__MaxRegexNodes` | `64` | предел числа узлов `regex` в наборе применяемых правил; правило, на котором он исчерпан, не применяется | целое 1..1000 |
+
 **Коэффициенты доверия источников** (задаются переменными окружения, применяются после перезапуска)
 
 | Переменная | По умолчанию | Назначение | Ограничения |
@@ -226,7 +245,7 @@ producer `rejected` идемпотентный с `acks=all`.
 | `0` | штатная остановка по SIGTERM |
 | `70` | фатальная ошибка клиента Kafka |
 | `1` | ошибка цикла приёма (лог `Critical`) |
-| `78` | ошибка конфигурации: одна строка в stderr с именем настройки; рестарт её не лечит |
+| `78` | ошибка конфигурации: одна строка в stderr с именем настройки; рестарт её не лечит. Для правил: неверное `DataSaver__Rules__*`, а на первой загрузке - нет таблицы `ktm.rejection_rules` (`42P01`, не накатана `V002`) или нет `SELECT` у `ktm_app` (`42501`) |
 
 ## 5. Сборка, тесты, запуск
 
@@ -254,15 +273,17 @@ sudo chown 1654:1654 secrets/ktm_app_password && chmod 0400 secrets/ktm_app_pass
 docker compose up -d --build    # образ собирается из корня репозитория: нужен docs/api
 ```
 
-Предусловия: БД создана по `db/README.md` (роли, схема `ktm`, миграции `db/migrations/V*.sql`; сервис схему не создаёт),
-топики Kafka созданы заранее.
+Предусловия: БД создана по `db/README.md` (роли, схема `ktm`, миграции `db/migrations/V*.sql`, включая `V002` с таблицей
+правил отбраковки; сервис схему не создаёт), топики Kafka созданы заранее.
 
 Health (порт `DataSaver__Health__Port`, внутренняя сеть, без аутентификации):
 
 - `GET /health/live` - 200, пока цикл приёма отмечается; 503 `loop_stalled` или `consumer_fatal_error`. Недоступность БД и
   Kafka liveness не роняет. На него направлен healthcheck контейнера.
-- `GET /health/ready` - 200, если consumer получил партиции, цикл не в `Degraded`, брокер и БД отвечают; иначе 503 с одним
-  из кодов `no_partitions_assigned`, `ingestion_degraded`, `broker_unavailable`, `database_unavailable`.
+- `GET /health/ready` - 200, если выполнена первая загрузка правил (пустая таблица - успех), consumer получил партиции, цикл не
+  в `Degraded`, брокер и БД отвечают; иначе 503 с одним из кодов `no_partitions_assigned`, `ingestion_degraded`,
+  `broker_unavailable`, `database_unavailable`, а до первой загрузки правил - `rules_not_loaded` (проверяется первым; при этом
+  `/health/live` остаётся 200). При `DataSaver__Rules__Enabled=false` `rules_not_loaded` не возникает.
 
 Статус `healthy` в `docker compose ps` готовность не подтверждает: смотрите `/health/ready`.
 
@@ -272,9 +293,44 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 - `docs/adr/0002-data-saver-ingestion.md` - пачки, идемпотентность, offset, сбои, настройки (D-11);
 - `docs/adr/0003-data-saver-validation-pipeline.md` - конвейер стадий и точка расширения под правила;
 - `docs/adr/0004-db-migrations.md` - миграции SQL-скриптами;
+- `docs/adr/0005-data-saver-rules-engine.md` - движок правил отбраковки (таблица правил, язык условий, опрос, контракт `rejected`, метрики);
+- `docs/manuals/rules-engine.md` - правила отбраковки для администратора: столбцы, синтаксис условий, SQL-команды, примеры;
+- `docs/api/rejection-condition.schema.json` - JSON Schema поля `condition` правила;
 - `docs/api/kafka-event-format.md`, `docs/api/kafka-event.schema.json` - формат сообщения;
 - `docs/design/Схема_БД_ER.md`, `db/README.md` - схема журнала и порядок применения;
 - `docs/manuals/data-saver.md` - руководство по эксплуатации;
 - `docs/test-protocols/data-saver-throughput.md` - протокол замера пропускной способности;
 - `docs/test-protocols/data-saver-scenario-coverage.md` - сверка сценариев спеков с тестами;
-- `openspec/changes/add-data-saver-core/` - proposal, design, specs, tasks.
+- `openspec/changes/add-data-saver-core/` - proposal, design, specs, tasks;
+- `openspec/changes/add-data-saver-rules-engine/` - то же для движка правил отбраковки.
+
+## 7. Правила отбраковки
+
+Стадия `RuleRejectionStage` (`Ktm.DataSaver.Core/Rules`) стоит в конвейере после проверки формата и C5. Для сообщения она
+вычисляет включённые правила его источника и общие (`source = '*'`) из таблицы `ktm.rejection_rules` в порядке `priority`, затем
+`rule_id`; сработало первое - событие не пишется в `ktm.events`, а публикуется в `ktm.events.rejected` с исходным телом и
+заголовками `ktm-reject-reason` (= код правила), `ktm-reject-rule-id`, `ktm-reject-rule-name`, `ktm-reject-rule-version`,
+`ktm-reject-detail`; в лог - `Warning`. Правила не знают сотрудников, ролей, смен и оценок: только поля самого сообщения.
+
+- **Хранилище и права.** Таблица создаётся миграцией `V002`, выключенные примеры - `V003` и `V004` (с `regex`). Сервис (`ktm_app`) правила только
+  читает; менять их может `ktm_migrator` либо выданная администратором роль. Аудита изменений нет (временное отступление от
+  `docs/04-ролевая-модель.md` п. 4.2/4.4, принято лидом).
+- **Язык условий.** JSON в нотации JsonLogic: `and`, `or`, `!`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `var` с точечным путём, диапазон -
+  трёхаргументный `<=` с включительными границами. Вычислитель собственный и строгий: типы не приводятся, отсутствующее поле не
+  срабатывает (кроме `!=` как отрицания `==`). Операторы регистрируются в реестре. Регулярное выражение -
+  `{"regex": [{"var": "путь"}, "шаблон"]}`: частичное совпадение, только строка-поле, движок `NonBacktracking` (время линейно по длине
+  значения; без просмотра вперёд/назад, обратных ссылок, атомарных групп, условных конструкций), без учёта регистра - `(?i)` в шаблоне;
+  шаблон 1..512 символов, до 8 `regex`-узлов в правиле и до `MaxRegexNodes` в наборе. Превышение `RegexTimeoutMs` отбраковывает сообщение с
+  системным кодом `rule_eval_timeout` (в обеих формах правила, с `!` и без); этот код правилам запрещён (проверяет сервис, не БД). `in`,
+  «пусто/заполнено» и сравнение `==`/`in` без учёта регистра отложены.
+- **Загрузка.** Первая загрузка выполняется до чтения Kafka: `Consume` и commit до неё не вызываются; подписка ленивая (решено, реализовано): consumer
+  создаётся и подписывается после первой успешной загрузки. БД недоступна - повтор с backoff, сервис не
+  готов; нет таблицы или прав - код 78. Затем опрос раз в `RefreshIntervalSeconds` (60 с по умолчанию). Замена набора атомарна; при сбое чтения действует
+  последний валидный набор; ошибочное правило выпадает одно, остальные работают. Перечитывание «по команде» не реализовано.
+- **Метрики** (meter `Ktm.DataSaver`): `ktm.datasaver.rules.rejected{source,rule_id}`, `rules.active`, `rules.invalid`,
+  `rules.reloads{result,trigger}` (`trigger`: `startup`/`timer`; `signal` зарезервирован, сейчас не выдаётся), `rules.snapshot_age`;
+  для правила `messages.rejected{reason="rule_matched"}`; `rules.eval_errors{kind="regex_timeout",rule_id}` - на каждый таймаут `regex`
+  (для него `messages.rejected{reason="rule_eval_timeout"}`, Warning не чаще раза в 10 минут на правило). `rules.active` - применяемые правила (включённые и без ошибок).
+- **Настройки** - таблица в разделе 4. `DataSaver__Rules__Enabled=false` отключает правила без пересборки (нужен перезапуск процесса).
+
+Описание для администратора и примеры - `docs/manuals/rules-engine.md`; эксплуатация - `docs/manuals/data-saver.md`, п. 11.

@@ -1,7 +1,9 @@
 using Ktm.DataSaver.Core.Decoding;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Tests.Decoding;
+using Ktm.DataSaver.Tests.Rules;
 
 namespace Ktm.DataSaver.Tests.Pipeline;
 
@@ -108,6 +110,47 @@ public class IngestionPipelineTests
         Assert.Equal("unsupported_event_type", rejection.Reason);
         Assert.Equal("test rule", rejection.Detail);
         Assert.Null(result.Event);
+    }
+
+    private const string MatchAnyEvent = """{"==":[{"var":"source"},"skud"]}""";
+
+    [Fact]
+    public void Process_RuleStageRunsAfterFormatAndC5_SoRulesNeverSeeFormatOrC5Rejections()
+    {
+        var holder = RuleRejectionStageTests.HolderWith(RuleTestSupport.Rule("match-all", source: null, condition: """{"!=":[{"var":"eventType"},"x"]}"""));
+        var ruleStage = new RuleRejectionStage(holder);
+
+        var format = Pipeline(new EventValidationStage(new AcceptAllEventValidator()), ruleStage)
+            .Process(EventSamples.Message(EventSamples.SkudWith(o => o["schemaVersion"] = 2), 0, 5));
+        var c5 = Pipeline(new EventValidationStage(new RejectEventTypeValidator("access_granted")), ruleStage).Process(ValidMessage);
+
+        Assert.Equal(RejectionKind.Format, format.Verdict.Rejection!.Kind);
+        Assert.Equal(RejectReasons.UnknownSchemaVersion, format.Verdict.Rejection.Reason);
+        Assert.Null(format.Verdict.Rejection.RuleId);
+        Assert.Equal(RejectionKind.Validation, c5.Verdict.Rejection!.Kind);
+        Assert.Null(c5.Verdict.Rejection.RuleId);
+    }
+
+    [Fact]
+    public void Process_RuleStage_RejectsMatchingEventWithOrigin_AndPassesNonMatchingOnToLaterStages()
+    {
+        var calls = new List<string>();
+        var holder = RuleRejectionStageTests.HolderWith(RuleTestSupport.Rule("skud-rule", condition: MatchAnyEvent, reason: "skud_junk"));
+        var ruleStage = new RuleRejectionStage(holder);
+        var cv = EventSamples.Message(EventSamples.Bytes(EventSamples.CvPresence), 1, 9);
+
+        var rejected = Pipeline(new EventValidationStage(new AcceptAllEventValidator()), ruleStage, new RecordingStage("after", calls))
+            .Process(ValidMessage);
+        var accepted = Pipeline(new EventValidationStage(new AcceptAllEventValidator()), ruleStage, new RecordingStage("after", calls))
+            .Process(cv);
+
+        Assert.Equal(RejectionKind.Rule, rejected.Verdict.Rejection!.Kind);
+        Assert.Equal("skud_junk", rejected.Verdict.Rejection.Reason);
+        Assert.Equal("skud-rule", rejected.Verdict.Rejection.RuleId);
+        Assert.Equal(new EventOrigin("skud", "48213377"), rejected.Origin);
+        Assert.Null(rejected.Event);
+        Assert.True(accepted.Verdict.IsAccepted);
+        Assert.Equal(["after"], calls);
     }
 
     [Fact]

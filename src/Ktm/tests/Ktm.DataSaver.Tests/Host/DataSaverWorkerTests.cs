@@ -17,6 +17,17 @@ public class DataSaverWorkerTests
         public void Terminate(int exitCode, string reason) => ExitCodes.Add(exitCode);
     }
 
+    private sealed class FakeConsumer : IConsumerLifecycle
+    {
+        public int Starts { get; private set; }
+
+        public int Disposals { get; private set; }
+
+        public void Start() => Starts++;
+
+        public void Dispose() => Disposals++;
+    }
+
     private static (DataSaverWorker Worker, RecordingTerminator Terminator, FakeLogger<DataSaverWorker> Logger) Create(Harness h, Meter meter)
     {
         var terminator = new RecordingTerminator();
@@ -27,7 +38,7 @@ public class DataSaverWorkerTests
         var handler = new KafkaFatalErrorHandler(terminator, new FakeLogger<KafkaFatalErrorHandler>(), throttle);
         var worker = new DataSaverWorker(
             h.Loop,
-            new KafkaMessageSource(options, handler, new FakeLogger<KafkaMessageSource>(), throttle),
+            new FakeConsumer(),
             new KafkaRejectionPublisher(options, handler, new FakeLogger<KafkaRejectionPublisher>(), throttle),
             new DataSaverMetrics(meter),
             terminator,

@@ -12,11 +12,12 @@ namespace Ktm.DataSaver.Hosting;
 /// </summary>
 public sealed class DataSaverWorker(
     IngestionLoop loop,
-    KafkaMessageSource consumer,
+    IConsumerLifecycle consumer,
     KafkaRejectionPublisher producer,
     DataSaverMetrics metrics,
     IProcessTerminator terminator,
-    ILogger<DataSaverWorker> logger) : BackgroundService
+    ILogger<DataSaverWorker> logger,
+    RuleRefreshService? rules = null) : BackgroundService
 {
     public const int LoopFailureExitCode = 1;
 
@@ -28,6 +29,14 @@ public sealed class DataSaverWorker(
         await Task.Yield();
         try
         {
+            if (rules is not null)
+            {
+                // Первая загрузка правил до приёма: Consume не вызывается, пока набор не загружен (ADR-0005 п. 2.10).
+                await rules.WaitForFirstLoadAsync(stoppingToken);
+            }
+
+            // Вход в группу только теперь: до первой загрузки правил consumer не создаётся и не подписывается.
+            consumer.Start();
             logger.LogInformation("Data Saver ingestion loop started");
             await loop.RunAsync(stoppingToken);
             logger.LogInformation("Data Saver ingestion loop finished");

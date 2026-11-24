@@ -11,6 +11,9 @@ SQL-скрипты схемы `ktm` (журнал событий Data Saver). Р
 |---|---|---|
 | `init/001_roles_and_extension.sql` | суперпользователь, один раз | роли `ktm_migrator` и `ktm_app` (без паролей), схема `ktm`, `GRANT CONNECT`, `GRANT USAGE ON SCHEMA public TO ktm_migrator`, `ALTER DEFAULT PRIVILEGES`; расширение `timescaledb` не создаёт (уже установлено администратором; для среды без него раскомментировать `CREATE EXTENSION` в скрипте) |
 | `migrations/V001__event_journal.sql` | `ktm_migrator` | `ktm.events` (hypertable, чанк 7 суток), `ktm.event_corrections`, индексы, триггеры неизменяемости (UPDATE/DELETE и TRUNCATE), сжатие (30 суток), `REVOKE/GRANT` |
+| `migrations/V002__rejection_rules.sql` | `ktm_migrator` | таблица правил отбраковки `ktm.rejection_rules` (ADR-0005): CHECK-и, `ktm_app` - только `SELECT`; триггеров, аудита и `NOTIFY` нет |
+| `migrations/V003__rejection_rules_examples.sql` | `ktm_migrator` | шесть **выключенных** примеров правил (`skud`, `cv`, `1c-do`, общее `*`); `INSERT ... ON CONFLICT (rule_id) DO NOTHING` |
+| `migrations/V004__rejection_rules_examples_regex.sql` | `ktm_migrator` | два **выключенных** примера правил с оператором `regex` (`skud-test-device`, `skud-blank-person`); `INSERT ... ON CONFLICT (rule_id) DO NOTHING` |
 
 ## Правила
 
@@ -21,7 +24,7 @@ SQL-скрипты схемы `ktm` (журнал событий Data Saver). Р
   (интеграционные тесты читают файлы из репозитория, не копии).
 - Применённый файл не правится: изменение схемы - новый файл `V00N__смысл.sql`.
 - Миграции применяются только под `ktm_migrator`; `V001` под другой ролью завершается ошибкой. Приложение работает под `ktm_app`
-  (`SELECT, INSERT`; `UPDATE`/`DELETE`/`TRUNCATE` нет).
+  (журнал: `SELECT, INSERT`, `UPDATE`/`DELETE`/`TRUNCATE` нет; правила отбраковки: только `SELECT`).
 - Пароли в репозиторий не попадают.
 
 ## Применение
@@ -105,6 +108,46 @@ SQL
 
 При первом применении `V001` TimescaleDB выдаёт три предупреждения `column "event_id" / "source" / "source_event_id"
 should be used for segmenting or ordering` - информационные сообщения о настройке сжатия, ошибкой не являются.
+
+## Правила отбраковки (`ktm.rejection_rules`)
+
+Таблица создаётся `V002`, примеры - `V003` и `V004` (примеры с `regex`) (решения - `docs/adr/0005-data-saver-rules-engine.md`). Условие правила - jsonb в нотации
+JsonLogic (`docs/api/rejection-condition.schema.json`); столбцы `source` и `enabled` обязательны (значения по умолчанию нет),
+`source = '*'` - правило для всех источников. Сервис (`ktm_app`) правила только читает (`SELECT`); `INSERT`/`UPDATE`/`DELETE` ему
+запрещены (`insufficient_privilege`).
+
+Размер условия ограничен CHECK `ck_rejection_rules_cond`: `octet_length(condition::text) <= 16384` (логическая длина нормализованного
+текста `jsonb`: после `:` и `,` пробел, порядок ключей приведён базой, поэтому условие без пробелов «весит» больше, чем написано).
+`octet_length` считает байты в кодировке сервера, поэтому **база данных должна быть создана в кодировке UTF8** (проверка:
+`SHOW server_encoding;`); тогда лимит - 16384 байта UTF-8. Такая же проверка есть в компиляторе сервиса (читает текст из базы).
+
+**Кто может править:** `ktm_migrator` (владелец схемы) либо роль, которую администратор выдаст отдельно. Отдельной роли-редактора пока нет.
+**Триггеров и аудита нет:** кто и когда изменил правило, БД не фиксирует (временное отступление, принято лидом; ADR-0005 п. 5);
+`version` увеличивает автор правки вручную, а сервис пишет Warning, если содержимое изменилось при прежней `version`.
+Изменение вступает в силу не позже интервала опроса сервиса (по умолчанию 60 с, `DataSaver__Rules__RefreshIntervalSeconds`).
+
+Правка SQL-командой (под `ktm_migrator`):
+
+```sql
+-- включить пример и поднять версию
+UPDATE ktm.rejection_rules SET enabled = true, version = version + 1 WHERE rule_id = 'skud-test-event';
+
+-- изменить условие
+UPDATE ktm.rejection_rules
+   SET condition = '{"==": [{"var": "eventType"}, "test_event"]}'::jsonb, version = version + 1
+ WHERE rule_id = 'skud-test-event';
+
+-- выключить
+UPDATE ktm.rejection_rules SET enabled = false, version = version + 1 WHERE rule_id = 'skud-test-event';
+```
+
+**Примеры выключают, не удаляют.** `V003` и `V004` выполняются при каждом прогоне `migrate`: удалённый пример (`DELETE`) вернётся выключенным,
+а изменённый вручную (`enabled`, `condition`, `version`) повторный прогон не затирает (`ON CONFLICT DO NOTHING`).
+
+**Примеры `regex` (`V004`) выключены, и шаблон выключенного правила не проверяется до включения:** база шаблон не разбирает, сервис
+компилирует только включённые правила. Неверный или не поддерживаемый шаблон (`(`, просмотр вперёд/назад, обратные ссылки) проявится при
+включении как ошибка этого правила (Error в логе с `rule_id`, `rules.invalid`), остальные правила работают. В JSON внутри обычной
+SQL-строки обратная косая записывается удвоенной (`"^\\s*\\z"` в SQL - это `^\s*\z` в шаблоне); `E''` не нужен.
 
 ## Проверка
 
