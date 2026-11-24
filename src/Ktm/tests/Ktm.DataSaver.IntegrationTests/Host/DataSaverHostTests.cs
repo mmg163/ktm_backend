@@ -72,6 +72,48 @@ public sealed class DataSaverHostTests(KafkaFixture kafka, PostgresFixture postg
     }
 
     [Fact]
+    public async Task AdminArea_IsServedOnTheHealthPort_WithSectionsOpenApiAndSwagger_HealthResponsesUnchanged()
+    {
+        var raw = await kafka.CreateTopicAsync("ktm.events.raw");
+        var rejected = await kafka.CreateTopicAsync("ktm.events.rejected");
+        var db = new NpgsqlConnectionStringBuilder(postgres.AppConnectionString);
+        await using var app = new DataSaverAppFactory(DataSaverAppFactory.Settings(kafka.BootstrapServers, raw, rejected, $"g-{Guid.NewGuid():N}", db));
+        using var client = app.CreateClient();
+        await WaitReadyAsync(client);
+
+        var sections = await GetAsync(client, "/admin/v1/sections");
+        var document = await GetAsync(client, "/admin/openapi/v1.json");
+        var swagger = await GetAsync(client, "/admin/swagger/index.html");
+        var jobs = await GetAsync(client, "/admin/v1/reprocessing/jobs");
+        var ready = await GetAsync(client, "/health/ready");
+
+        Assert.Equal(HttpStatusCode.OK, sections.Status);
+        Assert.Contains("\"reprocessing\"", sections.Body);
+        Assert.Equal(HttpStatusCode.OK, document.Status);
+        Assert.DoesNotContain("/health", document.Body);
+        Assert.Equal(HttpStatusCode.OK, swagger.Status);
+        Assert.Equal(HttpStatusCode.OK, jobs.Status);
+        Assert.Equal(HttpStatusCode.OK, ready.Status);
+        Assert.Contains("\"status\"", ready.Body);
+    }
+
+    [Fact]
+    public async Task SwaggerDisabled_DocumentAndUiAre404_AdminApiStillServed()
+    {
+        var raw = await kafka.CreateTopicAsync("ktm.events.raw");
+        var rejected = await kafka.CreateTopicAsync("ktm.events.rejected");
+        var settings = DataSaverAppFactory.Settings(kafka.BootstrapServers, raw, rejected, $"g-{Guid.NewGuid():N}", new NpgsqlConnectionStringBuilder(postgres.AppConnectionString));
+        settings["DataSaver:Admin:SwaggerEnabled"] = "false";
+        await using var app = new DataSaverAppFactory(settings);
+        using var client = app.CreateClient();
+        await WaitReadyAsync(client);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await GetAsync(client, "/admin/openapi/v1.json")).Status);
+        Assert.Equal(HttpStatusCode.NotFound, (await GetAsync(client, "/admin/swagger/index.html")).Status);
+        Assert.Equal(HttpStatusCode.OK, (await GetAsync(client, "/admin/v1/sections")).Status);
+    }
+
+    [Fact]
     public async Task DatabaseStopped_ReadinessIs503_ButLivenessStays200()
     {
         var raw = await kafka.CreateTopicAsync("ktm.events.raw");

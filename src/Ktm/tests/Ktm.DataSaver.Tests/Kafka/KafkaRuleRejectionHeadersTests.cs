@@ -24,7 +24,8 @@ public sealed class KafkaRuleRejectionHeadersTests
         var rejected = Rejected(info);
         var message = KafkaRejectionPublisher.ToMessage(rejected);
 
-        Assert.Equal(8, message.Headers.Count);
+        Assert.Equal(9, message.Headers.Count);
+        Assert.EndsWith("Z", Header(message, "ktm-source-timestamp"));
         Assert.Equal("test_data", Header(message, "ktm-reject-reason"));
         Assert.Equal("skud-test-event", Header(message, "ktm-reject-rule-id"));
         Assert.Equal("Тестовое событие СКУД", Header(message, "ktm-reject-rule-name"));
@@ -84,7 +85,7 @@ public sealed class KafkaRuleRejectionHeadersTests
         var info = new RejectionInfo(kind, "invalid_schema", detail, RuleName: "n", RuleVersion: 1);
         var message = KafkaRejectionPublisher.ToMessage(Rejected(info));
 
-        Assert.Equal(5, message.Headers.Count);
+        Assert.Equal(6, message.Headers.Count);
         Assert.False(message.Headers.TryGetLastBytes("ktm-reject-rule-name", out _));
         Assert.False(message.Headers.TryGetLastBytes("ktm-reject-rule-version", out _));
         Assert.Equal(detail, Header(message, "ktm-reject-detail"));

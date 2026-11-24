@@ -1,0 +1,974 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Data Saver admin API",
+    "description": "Administrative area of Data Saver (ADR-0006): reprocessing of dlq, rejected and raw messages. No authentication: reachable only from the internal network, never publish it outside.",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/admin/v1/sections": {
+      "get": {
+        "tags": [
+          "sections"
+        ],
+        "summary": "List admin sections",
+        "description": "Sections of the admin area; the admin UI builds its menu from this list.",
+        "operationId": "ListAdminSections",
+        "responses": {
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminSectionInfo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/reprocessing/jobs": {
+      "post": {
+        "tags": [
+          "reprocessing"
+        ],
+        "summary": "Start a reprocessing job",
+        "description": "Starts an asynchronous job that re-runs messages of dlq, rejected or raw (for a period) through the Data Saver pipeline. One job at a time. Request body: application/json (StartJobRequest).",
+        "operationId": "StartReprocessingJob",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type"
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "reprocessing"
+        ],
+        "summary": "List the latest jobs",
+        "description": "The latest 10 jobs, newest first. State is kept in memory: a service restart loses it.",
+        "operationId": "ListReprocessingJobs",
+        "responses": {
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/reprocessing/jobs/{id}": {
+      "get": {
+        "tags": [
+          "reprocessing"
+        ],
+        "summary": "Get job status and progress",
+        "operationId": "GetReprocessingJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/reprocessing/jobs/{id}/report": {
+      "get": {
+        "tags": [
+          "reprocessing"
+        ],
+        "summary": "Get the report of a finished job",
+        "description": "Coordinates, stage and reason code of messages that were rejected again or failed again; no message bodies. Query: limit 1..1000 (default 100), offset >= 0.",
+        "operationId": "GetReprocessingJobReport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..1000 (default 100).",
+            "schema": {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer",
+              "default": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of report entries to skip (default 0).",
+            "schema": {
+              "minimum": 0,
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/reprocessing/jobs/{id}/cancel": {
+      "post": {
+        "tags": [
+          "reprocessing"
+        ],
+        "summary": "Cancel an active job",
+        "description": "Cooperative: the job stops after the current batch, achieved progress is kept.",
+        "operationId": "CancelReprocessingJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdminSectionInfo": {
+        "required": [
+          "id",
+          "title",
+          "apiBase"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Идентификатор раздела (совпадает с идентификатором клиентского модуля админки)."
+          },
+          "title": {
+            "type": "string",
+            "description": "Название раздела для меню."
+          },
+          "apiBase": {
+            "type": "string",
+            "description": "Базовый путь API раздела."
+          }
+        },
+        "description": "Элемент ответа `GET /admin/v1/sections`."
+      },
+      "HttpValidationProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "JobError": {
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "`db_unavailable`, `source_unavailable` или `internal`."
+          }
+        },
+        "description": "Ошибка завершения задачи в состоянии `Failed`."
+      },
+      "JobListResponse": {
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobResponse"
+            },
+            "description": "Задачи."
+          }
+        },
+        "description": "Список последних задач (новые первыми, не больше 10; состояние в памяти)."
+      },
+      "JobParameters": {
+        "required": [
+          "source",
+          "from",
+          "to",
+          "reason",
+          "maxRate"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Источник: `dlq`, `rejected`, `raw`."
+          },
+          "from": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Начало периода (UTC) либо `null`.",
+            "format": "date-time"
+          },
+          "to": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Конец периода (UTC, не включая) либо `null`.",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Фильтр по коду причины либо `null`."
+          },
+          "maxRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Скорость, сообщений в секунду.",
+            "format": "int32"
+          }
+        },
+        "description": "Параметры задачи, как они были приняты."
+      },
+      "JobPartition": {
+        "required": [
+          "topic",
+          "partition",
+          "startOffset",
+          "endOffset",
+          "nextOffset"
+        ],
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "partition": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "startOffset": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "endOffset": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "nextOffset": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        },
+        "description": "Прогресс по партиции читаемого топика (границы сняты при запуске)."
+      },
+      "JobResponse": {
+        "required": [
+          "id",
+          "state",
+          "outcome",
+          "error",
+          "parameters",
+          "read",
+          "skippedByFilter",
+          "written",
+          "duplicates",
+          "rejectedAgain",
+          "failedAgain",
+          "partitions",
+          "totalMessages",
+          "estimatedRemainingSeconds",
+          "reportEntries",
+          "reportTruncated",
+          "createdAt",
+          "startedAt",
+          "finishedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Идентификатор задачи.",
+            "format": "uuid"
+          },
+          "state": {
+            "description": "`Queued`, `Running`, `Completed`, `Failed`, `Cancelled`.",
+            "$ref": "#/components/schemas/ReprocessJobState"
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "description": "Итог завершённой задачи: `Succeeded`, `CompletedWithFailures`, `Failed`, `Cancelled`.",
+                "$ref": "#/components/schemas/ReprocessOutcome"
+              }
+            ]
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "description": "Код ошибки для `Failed`.",
+                "$ref": "#/components/schemas/JobError"
+              }
+            ]
+          },
+          "parameters": {
+            "description": "Принятые параметры.",
+            "$ref": "#/components/schemas/JobParameters"
+          },
+          "read": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Прочитано сообщений.",
+            "format": "int64"
+          },
+          "skippedByFilter": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Пропущено фильтром `reason`.",
+            "format": "int64"
+          },
+          "written": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Записано новых событий.",
+            "format": "int64"
+          },
+          "duplicates": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Отсечено как дубли (ключ уже есть в журнале).",
+            "format": "int64"
+          },
+          "rejectedAgain": {
+            "type": "object",
+            "additionalProperties": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            },
+            "description": "Снова отбраковано конвейером, по коду причины."
+          },
+          "failedAgain": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Снова не записано из-за ошибки, привязанной к сообщению.",
+            "format": "int64"
+          },
+          "partitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobPartition"
+            },
+            "description": "Прогресс по партициям."
+          },
+          "totalMessages": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Сообщений в снятых границах.",
+            "format": "int64"
+          },
+          "estimatedRemainingSeconds": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "description": "Оценка оставшегося времени для выполняющейся задачи.",
+            "format": "double"
+          },
+          "reportEntries": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Записей в отчёте.",
+            "format": "int32"
+          },
+          "reportTruncated": {
+            "type": "boolean",
+            "description": "Потолок записей отчёта достигнут, часть записей не сохранена (счётчики полные)."
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Время создания (UTC).",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Время начала чтения (UTC).",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Время завершения (UTC).",
+            "format": "date-time"
+          }
+        },
+        "description": "Состояние и прогресс задачи. Тел сообщений и значений полей нет."
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ReportEntryResponse": {
+        "required": [
+          "kind",
+          "topic",
+          "partition",
+          "offset",
+          "coordinatesFromHeaders",
+          "stage",
+          "code",
+          "exceptionType",
+          "sqlState"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "description": "`RejectedAgain` (снова отбраковано) или `FailedAgain` (снова не записано).",
+            "$ref": "#/components/schemas/ReprocessReportKind"
+          },
+          "topic": {
+            "type": "string",
+            "description": "Исходный топик сообщения."
+          },
+          "partition": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Партиция.",
+            "format": "int32"
+          },
+          "offset": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Offset.",
+            "format": "int64"
+          },
+          "coordinatesFromHeaders": {
+            "type": "boolean",
+            "description": "`true` - координаты из `ktm-source-*`; `false` - фактические (заголовков не было)."
+          },
+          "stage": {
+            "type": "string",
+            "description": "Стадия: `parse`, `validation`, `rules`, `write`."
+          },
+          "code": {
+            "type": "string",
+            "description": "Код причины."
+          },
+          "exceptionType": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Имя типа исключения (для `FailedAgain`), без текста."
+          },
+          "sqlState": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "SQLSTATE ошибки записи, если есть."
+          }
+        },
+        "description": "Запись отчёта: координаты и причина, без тел сообщений и текстов исключений."
+      },
+      "ReportPageResponse": {
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "truncated"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportEntryResponse"
+            },
+            "description": "Записи страницы."
+          },
+          "total": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Всего записей в отчёте.",
+            "format": "int32"
+          },
+          "limit": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Размер страницы.",
+            "format": "int32"
+          },
+          "offset": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Смещение страницы.",
+            "format": "int32"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Потолок числа записей достигнут: часть записей не сохранена."
+          }
+        },
+        "description": "Страница отчёта задачи."
+      },
+      "ReprocessJobState": {
+        "enum": [
+          "Queued",
+          "Running",
+          "Completed",
+          "Failed",
+          "Cancelled"
+        ]
+      },
+      "ReprocessOutcome": {
+        "enum": [
+          "Succeeded",
+          "CompletedWithFailures",
+          "Failed",
+          "Cancelled",
+          null
+        ]
+      },
+      "ReprocessReportKind": {
+        "enum": [
+          "RejectedAgain",
+          "FailedAgain"
+        ]
+      },
+      "StartJobRequest": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Источник: `dlq`, `rejected` или `raw`."
+          },
+          "from": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Начало периода по Kafka-timestamp сообщения (включительно). Для `raw` обязательно."
+          },
+          "to": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Конец периода (не включая). Для `raw` обязательно."
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Фильтр по коду причины (`ktm-dlq-reason`/`ktm-reject-reason`); не для `raw`; до 200 символов."
+          },
+          "maxRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "description": "Сообщений в секунду; по умолчанию `DataSaver__Reprocess__MaxRatePerSecond`, не больше `MaxRateLimit`.",
+            "format": "int32"
+          }
+        },
+        "description": "Запрос запуска повторной обработки. Время - RFC 3339, только UTC с суффиксом `Z`."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "sections"
+    },
+    {
+      "name": "reprocessing"
+    }
+  ]
+}

@@ -179,6 +179,7 @@ flowchart LR
 |---|---|---|---|
 | `DataSaver__Kafka__Topic` | `ktm.events.raw` | входной топик | не пусто |
 | `DataSaver__Kafka__RejectedTopic` | `ktm.events.rejected` | топик отбракованных | не пусто |
+| `DataSaver__Kafka__DlqTopic` | `ktm.events.dlq` | топик сообщений, которые не удалось обработать (раздел 8) | не пусто |
 | `DataSaver__Kafka__GroupId` | `ktm-data-saver` | группа потребителей | не пусто |
 | `DataSaver__Kafka__ClientId` | не задан | `client.id` | |
 | `DataSaver__Kafka__GroupInstanceId` | не задан | `group.instance.id` (static membership) | уникален на реплику |
@@ -230,6 +231,18 @@ producer `rejected` идемпотентный с `acks=all`.
 | `DataSaver__Rules__MaxRules` | `500` | предел числа применяемых правил (успешно скомпилированных включённых); лишние не применяются, Error на каждое | целое >= 1, верхней границы нет |
 | `DataSaver__Rules__RegexTimeoutMs` | `200` | предел времени одного совпадения `regex`, мс; превышение отбраковывает сообщение с кодом `rule_eval_timeout` | целое 1..1000 |
 | `DataSaver__Rules__MaxRegexNodes` | `64` | предел числа узлов `regex` в наборе применяемых правил; правило, на котором он исчерпан, не применяется | целое 1..1000 |
+
+**dlq, повторная обработка, admin** (раздел 8; сверено с `DlqOptions`, `ReprocessOptions`, `AdminOptions`; неверное значение - отказ запуска, код 78, сообщение называет переменную)
+
+| Переменная | По умолчанию | Назначение | Ограничения |
+|---|---|---|---|
+| `DataSaver__Dlq__Enabled` | `true` | `false` - аварийный возврат: повтор без предела, в `dlq` ничего не уходит (нужен перезапуск) | `true`/`false` |
+| `DataSaver__Dlq__MaxAttempts` | `3` | число неудачных попыток обработки сообщения до `dlq` | целое 1..20 |
+| `DataSaver__Dlq__BreakerThreshold` | `20` | сколько подряд ушедших в `dlq` без успешной записи открывают предохранитель | целое 1..10000 |
+| `DataSaver__Reprocess__MaxRatePerSecond` | `200` | скорость повторной обработки, если запрос не задал `maxRate`, соб/с | целое 1..`MaxRateLimit` |
+| `DataSaver__Reprocess__MaxRateLimit` | `400` | жёсткий предел `maxRate` в запросе (выше - `400`) | целое 1..10000 |
+| `DataSaver__Reprocess__MaxUnavailableSeconds` | `600` | сколько задача ждёт недоступную БД до `Failed` (`db_unavailable`) | целое 1..86400 |
+| `DataSaver__Admin__SwaggerEnabled` | `true` | Swagger UI `/admin/swagger` и документ `/admin/openapi/v1.json` | `true`/`false` |
 
 **Коэффициенты доверия источников** (задаются переменными окружения, применяются после перезапуска)
 
@@ -294,6 +307,7 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 - `docs/adr/0003-data-saver-validation-pipeline.md` - конвейер стадий и точка расширения под правила;
 - `docs/adr/0004-db-migrations.md` - миграции SQL-скриптами;
 - `docs/adr/0005-data-saver-rules-engine.md` - движок правил отбраковки (таблица правил, язык условий, опрос, контракт `rejected`, метрики);
+- `docs/adr/0006-data-saver-dlq-and-reprocessing.md` - `ktm.events.dlq`, бюджет попыток, изоляция ядовитого сообщения, повторная обработка и admin-API;
 - `docs/manuals/rules-engine.md` - правила отбраковки для администратора: столбцы, синтаксис условий, SQL-команды, примеры;
 - `docs/api/rejection-condition.schema.json` - JSON Schema поля `condition` правила;
 - `docs/api/kafka-event-format.md`, `docs/api/kafka-event.schema.json` - формат сообщения;
@@ -302,7 +316,8 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 - `docs/test-protocols/data-saver-throughput.md` - протокол замера пропускной способности;
 - `docs/test-protocols/data-saver-scenario-coverage.md` - сверка сценариев спеков с тестами;
 - `openspec/changes/add-data-saver-core/` - proposal, design, specs, tasks;
-- `openspec/changes/add-data-saver-rules-engine/` - то же для движка правил отбраковки.
+- `openspec/changes/add-data-saver-rules-engine/` - то же для движка правил отбраковки;
+- `openspec/changes/add-data-saver-dlq-reprocessing/` - то же для `dlq` и повторной обработки.
 
 ## 7. Правила отбраковки
 
@@ -334,3 +349,70 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 - **Настройки** - таблица в разделе 4. `DataSaver__Rules__Enabled=false` отключает правила без пересборки (нужен перезапуск процесса).
 
 Описание для администратора и примеры - `docs/manuals/rules-engine.md`; эксплуатация - `docs/manuals/data-saver.md`, п. 11.
+
+## 8. Повторная обработка и DLQ
+
+Решения - `docs/adr/0006-data-saver-dlq-and-reprocessing.md`; регламент оператора - `docs/manuals/data-saver.md`, п. 12. Статус: написано до завершения
+реализации admin-API; коды, тела и поля ответов сверены с HTTP-тестами (`Ktm.DataSaver.Tests/Admin`), а сами `curl`-примеры **не проверены** на стенде (проверить при приёмке, протокол 7.4).
+Размер пачки и число попыток задачи берутся из тех же настроек, что у рабочего цикла (`DataSaver__Batch__MaxSize`, `DataSaver__Dlq__MaxAttempts`); отдельных настроек у них нет.
+
+### 8.1. `rejected` и `dlq`
+
+- `ktm.events.rejected` - **данные плохие**: не JSON, не по схеме, отказ C5 или правила. Решение о данных принято, попыток нет, заголовки `ktm-reject-*`.
+- `ktm.events.dlq` - **обработать сообщение не удалось**: после `DataSaver__Dlq__MaxAttempts` (3) попыток с паузой ошибка записи в БД (SQLSTATE `22xxx`, `23xxx`, ошибка значения параметра)
+  либо неожиданное исключение стадии разбора, C5 или правил. Ядовитое сообщение изолируется (остальные сообщения пачки записываются), уходит в `dlq` с исходными ключом и телом,
+  offset фиксируется после подтверждения брокера, партиция не блокируется. Заголовки `ktm-dlq-reason`, **`ktm-dlq-stage`** (`parse|validation|rules|write`),
+  **`ktm-dlq-exception-type`** (тип исключения, без текста), `ktm-dlq-detail`, `ktm-dlq-attempts`, `ktm-dlq-failed-at`, `ktm-source-topic|partition|offset|timestamp`.
+- Недоступность БД, сети, права - **не** `dlq`: повтор без предела, `ready = 503`.
+- Предохранитель: `DataSaver__Dlq__BreakerThreshold` (20) сообщений подряд в `dlq` без успешной записи - `dlq` отключается, приём блокируется (повтор без предела, `Degraded`, Error-лог),
+  `ktm.datasaver.dlq.breaker_open = 1`. Разблокировка - устранить причину или **перезапустить сервис** (состояние в памяти; сообщение уйдёт в `dlq` за `MaxAttempts` попыток).
+  Ограничение: 20 и более стадийных ядовитых сообщений в одной пачке открывают предохранитель, даже если рядом есть валидные (ADR-0006 п. 2.3 п. 6).
+- Метрики: `messages.dead_lettered{reason,stage}`, `write.isolations`, `dlq.breaker_open`, `retries{stage=dlq_publish}`; в лог - Error без тела и текста исключения.
+
+### 8.2. Повторная обработка через admin-API
+
+> **ВНИМАНИЕ: `/admin` работает на порту health без аутентификации (решение лида, принятый риск R-8).** Любой, кто достучался до порта, может запустить повторную обработку.
+> Не публикуйте `/admin` наружу (ingress, reverse proxy, внешний периметр, `ports:` на внешнем интерфейсе); доступ только из внутренней сети. Это требование к деплою и пункт приёмки.
+
+Задача асинхронная, одна одновременно, идёт в процессе сервиса, идемпотентна (повторный запуск: `written = 0`), ничего не публикует в топики и не коммитит offset. Адрес -
+`http://<data-saver-host>:8080` (`DataSaver__Health__Port`).
+
+```bash
+BASE=http://<data-saver-host>:8080
+
+# dlq (после исправления причины)
+curl -sS -i -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' -d '{"source":"dlq"}'
+
+# rejected (например, после выключения правила), одна причина, не быстрее 100 соб/с
+curl -sS -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' \
+  -d '{"source":"rejected","reason":"<reason_code>","maxRate":100}'
+
+# raw за период [from, to) по Kafka-timestamp, UTC с Z, оба обязательны
+curl -sS -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' \
+  -d '{"source":"raw","from":"2026-11-24T08:00:00Z","to":"2026-11-24T09:00:00Z"}'
+
+curl -sS "$BASE/admin/v1/reprocessing/jobs/<id>"                                  # статус и прогресс
+curl -sS "$BASE/admin/v1/reprocessing/jobs/<id>/report?limit=100&offset=0"        # отчёт (только после завершения; без тел)
+curl -sS -i -X POST "$BASE/admin/v1/reprocessing/jobs/<id>/cancel"                # отмена
+curl -sS "$BASE/admin/v1/reprocessing/jobs"                                       # последние 10 задач
+```
+
+- `202` - задача принята (`Location`, `id` в теле); `400` - ProblemDetails с ошибками по полям (`errors`: неизвестный `source`, время без `Z`, `from >= to`, `raw` без `from`/`to`,
+  `reason` для `raw` или длиннее 200 символов, `maxRate` вне `1..MaxRateLimit`, период раньше retention, тело не JSON - поле `body`); `409` - уже идёт другая задача (`activeJobId`);
+  `503` - Kafka не ответила при открытии источника, задача не создана (повторите позже); `415` - не `application/json`. Отчёт до завершения - `409`, неизвестный `id` - `404`.
+- Тело ответа задачи: `id`, `state`, `outcome`, `error{code}`, `parameters{source,from,to,reason,maxRate}`, `read`, `skippedByFilter`, `written`, `duplicates`, `rejectedAgain{код: число}`,
+  `failedAgain`, `partitions[{topic,partition,startOffset,endOffset,nextOffset}]`, `totalMessages`, `estimatedRemainingSeconds`, `reportEntries`, `reportTruncated`, `createdAt`, `startedAt`, `finishedAt`.
+  Список `GET /jobs` - `{ "items": [...] }`; отчёт - `{ "items": [{kind,topic,partition,offset,coordinatesFromHeaders,stage,code,exceptionType,sqlState}], "total", "limit", "offset", "truncated" }`.
+- Запуск и отмена пишутся в лог структурной записью `Admin audit:` (`JobId`, `AtUtc`, `RemoteIp`, `RequestedBy` из необязательного заголовка `X-Requested-By` - до 64 печатных символов, параметры); итог задачи -
+  записью `Reprocess job ... finished` с тем же `JobId` и счётчиками. Тел сообщений и запросов в логе нет. Примеры запросов - `docs/api/data-saver-admin.http`, описание - `docs/api/data-saver-admin.openapi.json`.
+- `outcome`: `Succeeded`; `CompletedWithFailures` (часть сообщений снова не записана или отбракована - см. отчёт); `Failed` с `error.code` `db_unavailable|source_unavailable|internal`
+  (запустить заново); `Cancelled`. Состояние задач в памяти: после перезапуска сервиса `id` не найден (`404`).
+- Результат проверяется запросом к журналу: событие с нужными `source` и `source_event_id` есть в `ktm.events` ровно одно; в статусе `written`/`duplicates`.
+
+### 8.3. Админка и Swagger
+
+- `http://<data-saver-host>:8080/admin/ui/` - страница без внешних скриптов: запуск (источник, период в UTC, причина, скорость) с **подтверждением**, список задач,
+  прогресс, отчёт, отмена. Меню строится по `GET /admin/v1/sections`.
+- `/admin/swagger` и `/admin/openapi/v1.json` - описание API; отключаются `DataSaver__Admin__SwaggerEnabled=false`.
+- Новый раздел админки: серверный класс `IAdminSection` + клиентский модуль `sections/<id>.js` и строка в `sections/index.js`; каркас не меняется
+  (порядок - `docs/manuals/data-saver.md`, п. 12.6).

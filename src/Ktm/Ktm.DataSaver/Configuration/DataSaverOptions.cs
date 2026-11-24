@@ -1,3 +1,4 @@
+using Ktm.DataSaver.Core.Resilience;
 using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Postgres;
@@ -41,6 +42,53 @@ public sealed class ShutdownOptions
     public const int HostMarginSeconds = 5;
 
     public int TimeoutSeconds { get; set; } = 30;
+}
+
+/// <summary>
+/// <c>DataSaver__Dlq__*</c>: уход сообщений, которые не удалось обработать, в dlq (ADR-0006 п. 2.3).
+/// <c>Enabled = false</c> - аварийный возврат к повтору без предела.
+/// </summary>
+public sealed class DlqOptions
+{
+    public const int MinMaxAttempts = 1;
+    public const int MaxMaxAttempts = 20;
+    public const int MinBreakerThreshold = 1;
+    public const int MaxBreakerThreshold = 10000;
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Число неудачных попыток по ошибке, привязанной к сообщению, до изоляции и dlq.</summary>
+    public int MaxAttempts { get; set; } = DlqPolicy.DefaultMaxAttempts;
+
+    /// <summary>Сколько сообщений подряд без успешной записи открывают предохранитель (dlq не используется).</summary>
+    public int BreakerThreshold { get; set; } = DlqPolicy.DefaultBreakerThreshold;
+
+    public DlqPolicy ToPolicy() => new(Enabled, MaxAttempts, BreakerThreshold);
+}
+
+/// <summary>
+/// <c>DataSaver__Reprocess__*</c>: пределы повторной обработки (ADR-0006 п. 2.6, В-8). <c>MaxRatePerSecond</c> - скорость, если запрос
+/// её не задал; <c>MaxRateLimit</c> - жёсткий верхний предел <c>maxRate</c> запроса; <c>MaxUnavailableSeconds</c> - сколько задача ждёт БД.
+/// </summary>
+public sealed class ReprocessOptions
+{
+    public const int MinMaxRate = 1;
+    public const int MaxMaxRateLimit = 10000;
+    public const int MinMaxUnavailableSeconds = 1;
+    public const int MaxMaxUnavailableSeconds = 86400;
+
+    public int MaxRatePerSecond { get; set; } = 200;
+
+    public int MaxRateLimit { get; set; } = 400;
+
+    public int MaxUnavailableSeconds { get; set; } = 600;
+}
+
+/// <summary><c>DataSaver__Admin__*</c>: admin-область на порту health (ADR-0006 п. 2.6).</summary>
+public sealed class AdminOptions
+{
+    /// <summary><c>false</c> - документ OpenAPI <c>/admin/openapi/v1.json</c> и Swagger UI <c>/admin/swagger</c> не отдаются (404).</summary>
+    public bool SwaggerEnabled { get; set; } = true;
 }
 
 /// <summary><c>DataSaver__Health__*</c>: отдельный порт Kestrel (D-10).</summary>
@@ -123,6 +171,7 @@ internal static class DataSaverChecks
         if (string.IsNullOrWhiteSpace(o.BootstrapServers)) yield return $"{p}BootstrapServers is required.";
         if (string.IsNullOrWhiteSpace(o.Topic)) yield return $"{p}Topic must not be empty.";
         if (string.IsNullOrWhiteSpace(o.RejectedTopic)) yield return $"{p}RejectedTopic must not be empty.";
+        if (string.IsNullOrWhiteSpace(o.DlqTopic)) yield return $"{p}DlqTopic must not be empty.";
         if (string.IsNullOrWhiteSpace(o.GroupId)) yield return $"{p}GroupId must not be empty.";
         if (o.SessionTimeoutMs < 1) yield return $"{p}SessionTimeoutMs must be positive.";
         if (o.ProducerMessageTimeoutMs < 1) yield return $"{p}ProducerMessageTimeoutMs must be positive.";
@@ -169,6 +218,39 @@ internal static class DataSaverChecks
         if (o.JitterFraction is < 0.0 or > 1.0) yield return $"{p}JitterFraction must be in range 0..1.";
     }
 
+    public static IEnumerable<string> Dlq(DlqOptions o)
+    {
+        const string p = "DataSaver__Dlq__";
+        if (o.MaxAttempts is < DlqOptions.MinMaxAttempts or > DlqOptions.MaxMaxAttempts)
+        {
+            yield return $"{p}MaxAttempts must be in range {DlqOptions.MinMaxAttempts}..{DlqOptions.MaxMaxAttempts}.";
+        }
+
+        if (o.BreakerThreshold is < DlqOptions.MinBreakerThreshold or > DlqOptions.MaxBreakerThreshold)
+        {
+            yield return $"{p}BreakerThreshold must be in range {DlqOptions.MinBreakerThreshold}..{DlqOptions.MaxBreakerThreshold}.";
+        }
+    }
+
+    public static IEnumerable<string> Reprocess(ReprocessOptions o)
+    {
+        const string p = "DataSaver__Reprocess__";
+        if (o.MaxRateLimit is < ReprocessOptions.MinMaxRate or > ReprocessOptions.MaxMaxRateLimit)
+        {
+            yield return $"{p}MaxRateLimit must be in range {ReprocessOptions.MinMaxRate}..{ReprocessOptions.MaxMaxRateLimit}.";
+        }
+
+        if (o.MaxRatePerSecond < ReprocessOptions.MinMaxRate || o.MaxRatePerSecond > o.MaxRateLimit)
+        {
+            yield return $"{p}MaxRatePerSecond must be in range {ReprocessOptions.MinMaxRate}..{p}MaxRateLimit ({o.MaxRateLimit}).";
+        }
+
+        if (o.MaxUnavailableSeconds is < ReprocessOptions.MinMaxUnavailableSeconds or > ReprocessOptions.MaxMaxUnavailableSeconds)
+        {
+            yield return $"{p}MaxUnavailableSeconds must be in range {ReprocessOptions.MinMaxUnavailableSeconds}..{ReprocessOptions.MaxMaxUnavailableSeconds}.";
+        }
+    }
+
     public static IEnumerable<string> Shutdown(ShutdownOptions o)
     {
         if (o.TimeoutSeconds < 1) yield return "DataSaver__Shutdown__TimeoutSeconds must be at least 1.";
@@ -207,7 +289,7 @@ internal static class DataSaverChecks
 
     /// <summary>
     /// Три блокирующих ожидания цикла, во время которых heartbeat не отмечается: Consume (до PollInterval), запись пачки
-    /// в БД (Connect + 3 * Command секунд) и публикация в rejected (до ProducerMessageTimeoutMs). Запись - это
+    /// в БД (Connect + 3 * Command секунд) и публикация в rejected или dlq (до ProducerMessageTimeoutMs). Запись - это
     /// BeginTransaction, ExecuteNonQuery и Commit: три обращения к БД, и CommandTimeout действует на каждое (допущение по
     /// документации Npgsql, замера нет, tasks 10.16). После каждого ожидания цикл отмечается (Touch), поэтому они не
     /// суммируются - худший случай максимум из трёх. Commit offset в Kafka - исключение: отметки вокруг него нет. Если
@@ -232,7 +314,7 @@ internal static class DataSaverChecks
                          $"max(ceil(DataSaver__PollIntervalMs / 1000) = {pollWait} s, " +
                          $"DataSaver__Postgres__ConnectTimeoutSeconds + 3 * DataSaver__Postgres__CommandTimeoutSeconds = {databaseWait} s, " +
                          $"ceil(DataSaver__Kafka__ProducerMessageTimeoutMs / 1000) = {publishWait} s) = {worst} s. " +
-                         "Consume, a database write and a publish to the rejected topic are blocking waits that do not touch the liveness heartbeat.";
+                         "Consume, a database write and a publish to the rejected or dead letter topic are blocking waits that do not touch the liveness heartbeat.";
         }
     }
 

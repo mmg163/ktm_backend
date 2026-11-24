@@ -1,0 +1,29 @@
+body { font-family: system-ui, sans-serif; margin: 0; color: #1b1f24; background: #f6f7f9; }
+.top { display: flex; align-items: center; gap: 24px; padding: 8px 20px; background: #1f2d3d; color: #fff; }
+.top h1 { font-size: 18px; margin: 0; }
+nav { display: flex; gap: 8px; }
+nav button { background: transparent; color: #cfd8e3; border: 0; padding: 6px 12px; cursor: pointer; border-radius: 4px; }
+nav button[aria-current="true"] { background: #3b536b; color: #fff; }
+main { padding: 20px; max-width: 1100px; }
+section { background: #fff; border: 1px solid #d9dee5; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+label { display: block; margin-bottom: 10px; font-size: 14px; }
+label span.hint { color: #667085; font-size: 12px; margin-left: 6px; }
+input, select { display: block; margin-top: 4px; padding: 5px 8px; min-width: 260px; font: inherit; }
+button.primary { background: #1f6feb; color: #fff; border: 0; padding: 7px 16px; border-radius: 4px; cursor: pointer; }
+button.danger { background: #c0392b; color: #fff; border: 0; padding: 7px 16px; border-radius: 4px; cursor: pointer; }
+button.link { background: transparent; border: 0; color: #1f6feb; cursor: pointer; padding: 0; text-decoration: underline; font: inherit; }
+button:disabled { opacity: .5; cursor: default; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { border-bottom: 1px solid #e5e8ec; text-align: left; padding: 4px 8px; }
+.error { background: #fdecea; border: 1px solid #f5b5ad; color: #7a1c12; padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
+.error ul { margin: 4px 0 0 18px; padding: 0; }
+.field-error { color: #b42318; font-size: 12px; }
+.ok { color: #067647; }
+.muted { color: #667085; font-size: 13px; }
+progress { width: 100%; }
+dialog { border: 1px solid #98a2b3; border-radius: 6px; padding: 16px 20px; max-width: 480px; }
+dialog dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0 16px; }
+dialog dt { color: #667085; }
+dialog dd { margin: 0; }
+dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 0; }

@@ -1,5 +1,6 @@
 using Ktm.DataSaver.Core.Ingestion;
 using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Core.Resilience;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -78,18 +79,20 @@ public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
             .ToArray();
         var corrections = ordered.Where(e => e.IsCorrection).ToArray();
 
+        // Команды строятся до открытия соединения: ошибки отображения значений (переполнение, формат, доверие источника)
+        // остаются свойством сообщения (-> Unexpected/write_value_error) и не удерживают соединение пула.
+        var insertEvents = BuildEventsCommand(ordered, receivedAt);
+        var insertCorrections = corrections.Length > 0 ? BuildCorrectionsCommand(corrections, receivedAt) : null;
+
         try
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             await using var batch = new NpgsqlBatch(connection, transaction);
 
-            var insertEvents = BuildEventsCommand(ordered, receivedAt);
             batch.BatchCommands.Add(insertEvents);
-            NpgsqlBatchCommand? insertCorrections = null;
-            if (corrections.Length > 0)
+            if (insertCorrections is not null)
             {
-                insertCorrections = BuildCorrectionsCommand(corrections, receivedAt);
                 batch.BatchCommands.Add(insertCorrections);
             }
 
@@ -101,7 +104,16 @@ public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
         {
             throw PostgresStoreException.Adapt(ex);
         }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && !IsMessageBound(ex))
+        {
+            // Любое иное исключение при работе с соединением (разрыв, остановка источника данных, занятое соединение,
+            // истёкшая транзакция) - отказ инфраструктуры, а не свойство сообщения: повтор без предела, не dlq.
+            throw PostgresStoreException.ConnectionUnavailable(ex);
+        }
     }
+
+    /// <summary>Ошибка значения, привязанная к сообщению: остаётся как есть и не оборачивается в отказ инфраструктуры.</summary>
+    internal static bool IsMessageBound(Exception exception) => WriteErrorClassifier.IsMessageBoundValueError(exception);
 
     private NpgsqlBatchCommand BuildEventsCommand(ParsedEvent[] events, DateTimeOffset receivedAt)
     {

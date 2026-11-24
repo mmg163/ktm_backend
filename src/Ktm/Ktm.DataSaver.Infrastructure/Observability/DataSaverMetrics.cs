@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Core.Resilience;
 
 namespace Ktm.DataSaver.Infrastructure.Observability;
 
@@ -7,7 +8,7 @@ namespace Ktm.DataSaver.Infrastructure.Observability;
 /// Метрики Data Saver (System.Diagnostics.Metrics, инструменты с префиксом <c>ktm.datasaver.</c>). Теги не содержат
 /// персональных данных: только причина отбраковки и стадия повтора.
 /// </summary>
-public sealed class DataSaverMetrics
+public sealed class DataSaverMetrics : IIngestionObserver
 {
     public const string MeterName = "Ktm.DataSaver";
 
@@ -17,6 +18,8 @@ public sealed class DataSaverMetrics
     private readonly Counter<long> _corrections;
     private readonly Counter<long> _rejected;
     private readonly Counter<long> _retries;
+    private readonly Counter<long> _deadLettered;
+    private readonly Counter<long> _isolations;
     private readonly Counter<long> _adminNotifications;
     private readonly Histogram<double> _batchDuration;
     private readonly Histogram<int> _batchSize;
@@ -44,7 +47,9 @@ public sealed class DataSaverMetrics
         _duplicates = meter.CreateCounter<long>("ktm.datasaver.events.duplicates", "{event}", "Events skipped as already stored (idempotent redelivery)");
         _corrections = meter.CreateCounter<long>("ktm.datasaver.corrections.written", "{correction}", "Correction links newly inserted");
         _rejected = meter.CreateCounter<long>("ktm.datasaver.messages.rejected", "{message}", "Messages published to the rejected topic, by reason");
-        _retries = meter.CreateCounter<long>("ktm.datasaver.retries", "{attempt}", "Failed write and rejected-publish attempts, by stage (the batch is then retried or handed to the failure handler)");
+        _retries = meter.CreateCounter<long>("ktm.datasaver.retries", "{attempt}", "Failed attempts, by stage: pipeline, write, publish (rejected), dlq_publish (the batch or message is then retried or handed to the failure handler)");
+        _deadLettered = meter.CreateCounter<long>("ktm.datasaver.messages.dead_lettered", "{message}", "Messages published to the dead letter topic (confirmed by the broker), by reason and stage");
+        _isolations = meter.CreateCounter<long>("ktm.datasaver.write.isolations", "{isolation}", "Poison message isolations started after a message-bound write failure");
         _adminNotifications = meter.CreateCounter<long>("ktm.datasaver.admin_notifications", "{notification}", "Administrator notifications (stub)");
         _batchDuration = meter.CreateHistogram<double>("ktm.datasaver.batch.duration", "s", "Duration of a successful batch write");
         _batchSize = meter.CreateHistogram<int>("ktm.datasaver.batch.size", "{event}", "Number of events in a written batch");
@@ -102,6 +107,16 @@ public sealed class DataSaverMetrics
             yield return new Measurement<double>(Math.Max(0, (_time.GetUtcNow().ToUnixTimeMilliseconds() - last) / 1000.0));
         }
     }
+
+    /// <summary>Сообщение подтверждено брокером в dlq; теги - код причины и стадия (фиксированные наборы, без данных сообщения).</summary>
+    public void MessageDeadLettered(string reason, string stage) =>
+        _deadLettered.Add(1, new KeyValuePair<string, object?>("reason", reason), new KeyValuePair<string, object?>("stage", stage));
+
+    public void WriteIsolation() => _isolations.Add(1);
+
+    /// <summary>Предохранитель dlq как наблюдаемое измерение: 1 - открыт, 0 - закрыт.</summary>
+    public void ObserveBreaker(DlqBreaker breaker) =>
+        Meter.CreateObservableGauge("ktm.datasaver.dlq.breaker_open", () => breaker.IsOpen ? 1 : 0, description: "Dead letter breaker: 1 open (dlq is not used), 0 closed");
 
     public void Retry(string stage) =>
         _retries.Add(1, new KeyValuePair<string, object?>("stage", stage));

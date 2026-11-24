@@ -5,6 +5,9 @@ using Ktm.DataSaver.Core.Ingestion;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
 using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Admin;
+using Ktm.DataSaver.Admin.Reprocessing;
+using Ktm.DataSaver.Core.Reprocessing;
 using Ktm.DataSaver.Core.Rules;
 using Ktm.DataSaver.Health;
 using Ktm.DataSaver.Hosting;
@@ -31,6 +34,8 @@ public static class DataSaverServiceCollectionExtensions
         AddOptions<BatchOptions>(services, root.GetSection("Batch"), DataSaverChecks.Batch);
         AddOptions<BackoffOptions>(services, root.GetSection("Backoff"), DataSaverChecks.Backoff);
         AddOptions<ShutdownOptions>(services, root.GetSection("Shutdown"), DataSaverChecks.Shutdown);
+        AddOptions<DlqOptions>(services, root.GetSection("Dlq"), DataSaverChecks.Dlq);
+        AddOptions<ReprocessOptions>(services, root.GetSection("Reprocess"), DataSaverChecks.Reprocess);
         AddOptions<HealthOptions>(services, root.GetSection("Health"), DataSaverChecks.Health);
         services.AddSingleton<IValidateOptions<HealthOptions>, LiveStaleConsistencyValidator>();
         AddOptions<TrustOptions>(services, root.GetSection("Trust"), DataSaverChecks.Trust);
@@ -87,6 +92,18 @@ public static class DataSaverServiceCollectionExtensions
         services.AddSingleton<IMessageSource>(sp => new MeteredMessageSource(
             sp.GetRequiredService<KafkaMessageSource>(), sp.GetRequiredService<DataSaverMetrics>()));
         services.AddSingleton<IOffsetCommitter, KafkaOffsetCommitter>();
+        services.AddSingleton<KafkaDeadLetterPublisher>(sp => new KafkaDeadLetterPublisher(
+            sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
+            sp.GetRequiredService<KafkaFatalErrorHandler>(),
+            sp.GetRequiredService<ILogger<KafkaDeadLetterPublisher>>(),
+            sp.GetRequiredService<LogThrottle>()));
+        services.AddSingleton<IDeadLetterPublisher>(sp => new ObservedDeadLetterPublisher(
+            sp.GetRequiredService<KafkaDeadLetterPublisher>(),
+            sp.GetRequiredService<DataSaverMetrics>(),
+            sp.GetRequiredService<ILogger<ObservedDeadLetterPublisher>>()));
+        services.AddSingleton(sp => sp.GetRequiredService<IOptions<DlqOptions>>().Value.ToPolicy());
+        services.AddSingleton(sp => new DlqBreaker(sp.GetRequiredService<IOptions<DlqOptions>>().Value.BreakerThreshold));
+        services.AddSingleton<IIngestionObserver>(sp => sp.GetRequiredService<DataSaverMetrics>());
         services.AddSingleton<KafkaRejectionPublisher>(sp => new KafkaRejectionPublisher(
             sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
             sp.GetRequiredService<KafkaFatalErrorHandler>(),
@@ -128,7 +145,58 @@ public static class DataSaverServiceCollectionExtensions
         }
 
         services.AddHostedService<DataSaverWorker>();
+
+        AddReprocessing(services);
+        // Admin-область на порту health: разделы регистрируются строкой AddAdminSection (design Р-8).
+        services.AddAdmin(root.GetSection("Admin"));
+        services.AddBuiltInAdminSections();
         return services;
+    }
+
+    // Повторная обработка (ADR-0006 п. 2.6): задача идёт в процессе сервиса, тот же конвейер и та же идемпотентная запись;
+    // MaxAttempts и BatchSize - те же настройки, что у рабочего цикла (Dlq__MaxAttempts, Batch__MaxSize).
+    private static void AddReprocessing(IServiceCollection services)
+    {
+        services.AddSingleton(sp =>
+        {
+            var reprocess = sp.GetRequiredService<IOptions<ReprocessOptions>>().Value;
+            return new ReprocessSettings(
+                reprocess.MaxRateLimit,
+                TimeSpan.FromSeconds(reprocess.MaxUnavailableSeconds),
+                ReprocessSettings.DefaultMaxReportEntries,
+                sp.GetRequiredService<IOptions<BatchOptions>>().Value.MaxSize,
+                sp.GetRequiredService<IOptions<DlqOptions>>().Value.MaxAttempts);
+        });
+        services.AddSingleton<IReplaySource>(sp => new KafkaReplaySource(
+            sp.GetRequiredService<IOptions<KafkaOptions>>().Value,
+            sp.GetRequiredService<ILogger<KafkaReplaySource>>(),
+            sp.GetRequiredService<LogThrottle>()));
+        services.AddSingleton<IReplayEventWriter>(sp => new CountingEventStore(sp.GetRequiredService<IBatchWriter>()));
+        services.AddSingleton(sp =>
+        {
+            var backoff = sp.GetRequiredService<IOptions<BackoffOptions>>().Value;
+            return new ReprocessRunner(
+                sp.GetRequiredService<IngestionPipeline>(),
+                sp.GetRequiredService<IReplayEventWriter>(),
+                sp.GetRequiredService<ReprocessSettings>(),
+                // Политика не потокобезопасна: на каждый запуск задачи своя.
+                () => new BackoffPolicy(
+                    TimeSpan.FromMilliseconds(backoff.InitialMs),
+                    TimeSpan.FromMilliseconds(backoff.MaxMs),
+                    backoff.Multiplier,
+                    backoff.JitterFraction,
+                    Random.Shared.NextDouble),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<ReprocessRunner>>());
+        });
+        services.AddSingleton<ReprocessJobManager>(sp => new ReprocessJobManager(
+            sp.GetRequiredService<IReplaySource>(),
+            sp.GetRequiredService<ReprocessRunner>(),
+            sp.GetRequiredService<ReprocessSettings>(),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<ILogger<ReprocessJobManager>>()));
+        // Регистрируется после DataSaverWorker: останавливается раньше него (обратный порядок), задача отменяется до закрытия consumer/producer.
+        services.AddHostedService<ReprocessJobHostedService>();
     }
 
     // Значение, которое не разбирается как bool, не отключает правила: об ошибке скажет проверка опций при старте.

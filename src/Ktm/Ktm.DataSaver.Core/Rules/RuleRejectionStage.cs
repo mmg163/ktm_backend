@@ -14,6 +14,8 @@ public sealed class RuleRejectionStage(IRuleSnapshotProvider snapshots) : IInges
 {
     public const int MaxDetailLength = 1024;
 
+    public string Stage => PipelineStages.Rules;
+
     public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed)
     {
         var snapshot = snapshots.Current;

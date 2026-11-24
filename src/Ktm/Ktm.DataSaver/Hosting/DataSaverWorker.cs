@@ -1,4 +1,5 @@
 using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Core.Resilience;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 
@@ -6,7 +7,7 @@ namespace Ktm.DataSaver.Hosting;
 
 /// <summary>
 /// Запускает <see cref="IngestionLoop"/> и владеет порядком остановки (D-8): цикл дописывает пачку и делает commit,
-/// затем закрывается consumer (выход из группы), затем сбрасывается producer. <see cref="BackgroundService.StopAsync"/>
+/// затем закрывается consumer (выход из группы), затем сбрасываются оба producer (rejected и dlq). <see cref="BackgroundService.StopAsync"/>
 /// только сигнализирует токеном и ждёт <see cref="ExecuteAsync"/> в пределах <c>HostOptions.ShutdownTimeout</c>.
 /// Ошибка цикла не глотается: критический лог, ненулевой код выхода и остановка host.
 /// </summary>
@@ -14,6 +15,8 @@ public sealed class DataSaverWorker(
     IngestionLoop loop,
     IConsumerLifecycle consumer,
     KafkaRejectionPublisher producer,
+    KafkaDeadLetterPublisher deadLetterProducer,
+    DlqBreaker breaker,
     DataSaverMetrics metrics,
     IProcessTerminator terminator,
     ILogger<DataSaverWorker> logger,
@@ -24,6 +27,7 @@ public sealed class DataSaverWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         metrics.ObserveLoop(loop);
+        metrics.ObserveBreaker(breaker);
 
         // Consume блокирующий: уходим с потока запуска host, чтобы не задерживать старт остальных служб.
         await Task.Yield();
@@ -53,9 +57,22 @@ public sealed class DataSaverWorker(
         }
         finally
         {
-            // Цикл вышел: нет ни Consume, ни Commit, поэтому Close() не гоняется с ними. Порядок: consumer, затем producer.
-            consumer.Dispose();
-            producer.Dispose();
+            // Цикл вышел: нет ни Consume, ни Commit, поэтому Close() не гоняется с ними. Порядок: consumer, затем оба producer (rejected и dlq).
+            try
+            {
+                consumer.Dispose();
+            }
+            finally
+            {
+                try
+                {
+                    producer.Dispose();
+                }
+                finally
+                {
+                    deadLetterProducer.Dispose();
+                }
+            }
         }
     }
 }

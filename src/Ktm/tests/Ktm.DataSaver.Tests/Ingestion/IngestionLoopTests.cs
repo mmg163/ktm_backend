@@ -104,7 +104,7 @@ public class IngestionLoopTests
 
         await h.RunAsync();
 
-        Assert.Equal(2, h.Notifier.Count);
+        Assert.Equal(2, h.Notifier.FatalConfigCalls);
         Assert.Equal(["write", "pause", "write", "write", "resume", "commit"], h.Log);
     }
 
@@ -124,21 +124,26 @@ public class IngestionLoopTests
     }
 
     [Fact]
-    public async Task DataError_WithBlockingStub_RetriesSameBatch_StaysDegraded_AndCommitsNothing()
+    public async Task DataError_WithBlockingStubAndDlqDisabled_RetriesSameBatch_StaysDegraded_AndCommitsNothing()
     {
         var h = new Harness(batchSize: 3);
         var blocking = new BlockingWriteFailureHandler();
+        // Прежнее поведение (повтор без предела) - при выключенном dlq (ADR-0006 п. 2.3, п. 7).
+        var disabled = new DlqPolicy(false, DlqPolicy.DefaultMaxAttempts, DlqPolicy.DefaultBreakerThreshold);
         var loop = new IngestionLoop(
             h.Source,
             new IngestionPipeline(new FormatStage(new EventDecoder()), []),
             h.Store,
             h.Publisher,
+            h.DeadLetters,
             h.Committer,
             blocking,
             h.Notifier,
             new Batcher<ConsumedMessage>(3, TimeSpan.FromHours(1), h.Time),
             new BackoffPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 2, 0, () => 0.5),
             new IngestionLoopOptions(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30)),
+            disabled,
+            new DlqBreaker(disabled.BreakerThreshold),
             h.Time,
             h.Logger);
         h.Source.Enqueue(Valid(0, 0), Valid(0, 1), Valid(0, 2));
@@ -347,6 +352,8 @@ public class IngestionLoopTests
 
     private sealed class ThrowWithBodyStage : IIngestionStage
     {
+        public string Stage => PipelineStages.Validation;
+
         private bool _thrown;
 
         public IngestionVerdict Evaluate(Ktm.DataSaver.Core.Model.ConsumedMessage message, Ktm.DataSaver.Core.Model.ParsedEvent parsed)
@@ -382,6 +389,8 @@ public class IngestionLoopTests
 
     private sealed class ThrowOnceStage : IIngestionStage
     {
+        public string Stage => PipelineStages.Validation;
+
         private bool _thrown;
 
         public IngestionVerdict Evaluate(Ktm.DataSaver.Core.Model.ConsumedMessage message, Ktm.DataSaver.Core.Model.ParsedEvent parsed)

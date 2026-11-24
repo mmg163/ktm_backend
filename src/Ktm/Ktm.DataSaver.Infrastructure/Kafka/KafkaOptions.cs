@@ -18,6 +18,9 @@ public sealed class KafkaOptions
     /// <summary>Топик отбракованных по умолчанию.</summary>
     public string RejectedTopic { get; set; } = "ktm.events.rejected";
 
+    /// <summary>Топик сообщений, которые не удалось обработать (ADR-0006): ошибка записи или неожиданное исключение стадии.</summary>
+    public string DlqTopic { get; set; } = "ktm.events.dlq";
+
     public string GroupId { get; set; } = "ktm-data-saver";
 
     public string? ClientId { get; set; }
@@ -48,7 +51,7 @@ public sealed class KafkaOptions
 
     public int SessionTimeoutMs { get; set; } = 45000;
 
-    /// <summary>Предел ожидания подтверждения публикации отбракованного брокером.</summary>
+    /// <summary>Предел ожидания подтверждения публикации в rejected и dlq брокером.</summary>
     public int ProducerMessageTimeoutMs { get; set; } = 30000;
 
     /// <summary>

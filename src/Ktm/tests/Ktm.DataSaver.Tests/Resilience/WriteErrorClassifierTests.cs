@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using Ktm.DataSaver.Core.Pipeline;
 using Ktm.DataSaver.Core.Resilience;
 
 namespace Ktm.DataSaver.Tests.Resilience;
@@ -55,10 +56,43 @@ public class WriteErrorClassifierTests
         Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new FakeDbException(null, new SocketException())));
     }
 
+    // Решение лида (ADR-0006 п. 2.2): прежнее правило «неизвестное исключение - Transient» отменено.
+    // Без предела повторяется только инфраструктура; неожиданное исключение - свойство сообщения.
     [Fact]
-    public void Unknown_exception_is_transient_so_nothing_is_lost()
+    public void Unknown_exception_is_unexpected_and_spends_the_message_budget()
     {
-        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new InvalidOperationException()));
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(new InvalidOperationException()));
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(new NullReferenceException()));
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(new FormatException()));
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(new AggregateException()));
+    }
+
+    private sealed class FakeDriverException(string? sqlState) : System.Data.Common.DbException("driver")
+    {
+        public override string? SqlState { get; } = sqlState;
+    }
+
+    private sealed class PoolExhausted : Exception, IInfrastructureFailure;
+
+    [Fact]
+    public void Infrastructure_failures_stay_transient_however_they_are_wrapped()
+    {
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new System.Net.Sockets.SocketException()));
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new ObjectDisposedException("data source")));
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new TaskCanceledException()));
+        // Драйвер БД без SQLSTATE (нет соединения, сбой протокола) - инфраструктура; с SQLSTATE 22/23 - данные.
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new FakeDriverException(null)));
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new InvalidOperationException("outer", new FakeDriverException(null))));
+        Assert.Equal(WriteErrorClass.Data, WriteErrorClassifier.Classify(new FakeDriverException("23514")));
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new InvalidOperationException("outer", new PoolExhausted())));
+    }
+
+    [Fact]
+    public void Stage_failure_is_classified_by_its_inner_exception()
+    {
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(new PipelineStageException(PipelineStages.Rules, new InvalidOperationException())));
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new PipelineStageException(PipelineStages.Validation, new TimeoutException())));
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(new PipelineStageException(PipelineStages.Parse, new IOException())));
     }
 
     [Fact]
@@ -76,9 +110,11 @@ public class WriteErrorClassifierTests
         var mixed = new AggregateException(new FakeDbException("22001"), new TimeoutException());
         var withFatal = new AggregateException(new TimeoutException(), new FakeDbException("42501"));
         var onlyData = new AggregateException(new FakeDbException("22001"), new FakeDbException("23502"));
+        var dataAndUnexpected = new AggregateException(new FakeDbException("22001"), new InvalidOperationException());
 
         Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(mixed));
         Assert.Equal(WriteErrorClass.FatalConfig, WriteErrorClassifier.Classify(withFatal));
         Assert.Equal(WriteErrorClass.Data, WriteErrorClassifier.Classify(onlyData));
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(dataAndUnexpected));
     }
 }
