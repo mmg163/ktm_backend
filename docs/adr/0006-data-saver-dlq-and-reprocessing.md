@@ -5,7 +5,7 @@
 - Область: Data Saver, `openspec/changes/add-data-saver-dlq-reprocessing`
 - Связанные документы: ADR-0002 (D-6, D-7, D-8а; закрывает G-7), ADR-0003 (п. 2.3 - порт C6), ADR-0005 (конвейер, правила),
   `docs/05-источники-данных.md` п. 5.1, `docs/07-нефункциональные-требования.md` п. 7.1-7.2, `docs/api/kafka-event-format.md`,
-  `infra/kafka/README.md` (топики `ktm.events.raw` 9 партиций / 7 суток, `ktm.events.rejected` и `ktm.events.dlq` 3 партиции / 30 суток).
+  `infra/kafka/README.md` (топики `ktm.events.raw.<source>` по 3 партиции / 7 суток, `ktm.events.rejected` и `ktm.events.dlq` 3 партиции / 30 суток).
 
 ## 1. Контекст
 

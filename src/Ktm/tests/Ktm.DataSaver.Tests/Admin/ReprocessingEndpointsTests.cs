@@ -202,7 +202,8 @@ public sealed class ReprocessingEndpointsTests
         var (open, release) = AdminTestHost.BlockedSource();
         await using var host = await AdminTestHost.StartAsync(open);
         // Лишнее поле тела - маркер данных: в аудит попадают только параметры задачи, не тело запроса.
-        var noisyHeader = "ivanov\u0007" + new string('x', 100);
+        var noisyHeader = "ivanov" + new string('x', 100);
+        Assert.Equal("ivanovx", Ktm.DataSaver.Admin.AdminAudit.SanitizeRequestedBy("ivanov\u0007x"));
         using var started = await host.PostJobAsync("""{"source":"dlq","reason":"write_data_error","note":"BODY-MARKER"}""", noisyHeader);
         var id = (await Json.OfAsync(started)).GetProperty("id").GetGuid();
         using var cancel = await host.Client.PostAsync($"{Jobs}/{id}/cancel", null);

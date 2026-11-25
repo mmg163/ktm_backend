@@ -142,7 +142,7 @@ public class KafkaReplaySourceUnitTests
         Assert.Equal(TimeSpan.FromSeconds(5), budget.NextTimeout());
         time.Advance(TimeSpan.FromSeconds(5));
 
-        Assert.Throws<ReplaySourceException>(budget.NextTimeout);
+        Assert.Throws<ReplaySourceException>(() => budget.NextTimeout());
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public class KafkaReplaySourceUnitTests
         var budget = new OpenBudget(new FakeTimeProvider(), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10), cts.Token);
         cts.Cancel();
 
-        Assert.Throws<OperationCanceledException>(budget.NextTimeout);
+        Assert.Throws<OperationCanceledException>(() => budget.NextTimeout());
     }
 
     private static readonly byte[] Body = Encoding.UTF8.GetBytes("""{"k":"v"}""");

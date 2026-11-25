@@ -1,6 +1,6 @@
 # Data Saver: руководство по эксплуатации
 
-Сервис читает топик Kafka `ktm.events.raw` (группа `ktm-data-saver`), проверяет сообщения по схеме
+Сервис читает настроенные топики Kafka `ktm.events.raw.<source>` (группа `ktm-data-saver`), проверяет сообщения по схеме
 `docs/api/kafka-event.schema.json` и пишет события пачками в таблицу `ktm.events` (и ссылки корректировок в
 `ktm.event_corrections`). Offset коммитится только после COMMIT в БД. Сообщения, не прошедшие проверку формата, уходят в
 `ktm.events.rejected`; туда же уходят сообщения, подпавшие под правила отбраковки из таблицы `ktm.rejection_rules` (п. 11).
@@ -18,8 +18,9 @@
    правил отбраковки `ktm.rejection_rules`), `V003` и `V004` (выключенные примеры правил, `V004` - с оператором `regex`). Сервис работает под ролью `ktm_app`
    (`SELECT, INSERT` на журнал, только `SELECT` на `ktm.rejection_rules`), схему сам не создаёт и не мигрирует. Без `V002`
    сервис при `DataSaver__Rules__Enabled=true` не стартует (код выхода 78, п. 11).
-2. **Kafka.** Топики созданы заранее (автосоздание выключено): `ktm.events.raw` (9 партиций, хранение 7 суток) и
-   `ktm.events.rejected` (3 партиции, 30 суток) - `infra/kafka/README.md`. Если `ktm.events.raw` нет, сервис стартует, но
+2. **Kafka.** Топики созданы заранее (автосоздание выключено): `ktm.events.raw.skud`, `ktm.events.raw.cv`,
+   `ktm.events.raw.1c-do` (каждый по 3 партиции, хранение 7 суток), `ktm.events.rejected` и `ktm.events.dlq`
+   (каждый по 3 партиции, 30 суток) - `infra/kafka/README.md`. Если настроенного входного топика нет, сервис стартует, но
    `/health/ready` = 503 `no_partitions_assigned` (п. 5).
 3. **Docker.** Образ собирается из корня репозитория (нужен `docs/api`, который встраивается в сборку):
 
@@ -50,7 +51,7 @@
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `DataSaver__Kafka__Topic` | `ktm.events.raw` | входной топик |
+| `DataSaver__Kafka__Topic` | `ktm.events.raw` | входной топик; укажите, например, `ktm.events.raw.skud` |
 | `DataSaver__Kafka__RejectedTopic` | `ktm.events.rejected` | топик отбракованных |
 | `DataSaver__Kafka__DlqTopic` | `ktm.events.dlq` | топик сообщений, которые не удалось обработать (п. 12); не пусто, иначе код 78 |
 | `DataSaver__Kafka__GroupId` | `ktm-data-saver` | группа потребителей |
@@ -62,6 +63,11 @@
 | `DataSaver__Kafka__SaslMechanism` | не задан | `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`, `GSSAPI`, `OAUTHBEARER` |
 | `DataSaver__Kafka__SaslUsername` | не задан | пользователь SASL |
 | `DataSaver__Kafka__SaslPasswordFile` / `DataSaver__Kafka__SaslPassword` | не задан | пароль SASL, взаимоисключающие; предпочтителен файл |
+
+Значение без `^` обозначает точное имя, а не алиас: `ktm.events.raw` не включает топики источников.
+Для подписки на несколько топиков Kafka-клиент принимает регулярное выражение, например
+`^ktm\.events\.raw\..+`; этот режим на стенде не проверен. Повторная обработка `raw` использует
+значение `Topic` как конкретное имя и с таким выражением не работает.
 
 Без вашего участия фиксированы: чтение с `earliest` при отсутствии offset группы, автокоммит выключен, стратегия
 распределения `cooperative-sticky`, автосоздание топиков выключено, producer `rejected` идемпотентный с `acks=all`.
@@ -208,7 +214,7 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
 ## 4. Масштабирование копиями
 
 Несколько копий с одним `DataSaver__Kafka__GroupId`; партиции между ними делит Kafka, общего состояния и координации нет
-(ADR-0002, D-9). Предел параллелизма - число партиций `ktm.events.raw` (9): копий больше 9 смысла не имеют.
+(ADR-0002, D-9). Предел параллелизма - сумма партиций подписанных топиков: по 3 на каждый источник.
 
 - **Static membership** (`DataSaver__Kafka__GroupInstanceId`) необязателен. Если используется, значение должно быть
   **уникальным на каждую реплику** и стабильным между перезапусками реплики (например `data-saver-1`, `data-saver-2`):
@@ -256,7 +262,7 @@ docker compose exec data-saver bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf 
 | `reason` | Что значит | Что делать |
 |---|---|---|
 | `rules_not_loaded` | правила отбраковки включены, но первая загрузка таблицы `ktm.rejection_rules` ещё не удалась (приём не начат, Kafka не читается). Проверяется первой. Не возникает при `DataSaver__Rules__Enabled=false` | если идёт старт - подождать; если держится: БД недоступна (в логе `Warning` «Rules are not loaded yet ...», повтор с backoff, не чаще раза в 10 минут на причину); нет таблицы или прав (`42P01`/`42501`) - процесс завершается кодом 78, а не висит в этом статусе: накатить `V002`, выдать `SELECT` роли `ktm_app` (п. 11) |
-| `no_partitions_assigned` | consumer не получил партиций: идёт старт или ребаланс, **топика `ktm.events.raw` нет в кластере**, нет связи с брокером на старте | подождать ребаланс (до `SessionTimeoutMs`); проверить, что топик создан (`infra/kafka/README.md`), `BootstrapServers` верен, брокер доступен из контейнера; смотреть лог `Kafka client error` |
+| `no_partitions_assigned` | consumer не получил партиций: идёт старт или ребаланс, **настроенного входного топика нет в кластере**, нет связи с брокером на старте | подождать ребаланс (до `SessionTimeoutMs`); проверить, что топик создан (`infra/kafka/README.md`), `BootstrapServers` верен, брокер доступен из контейнера; смотреть лог `Kafka client error` |
 | `ingestion_degraded` | запись пачки или публикация в `rejected` не удалась: партиции на паузе, цикл повторяет **ту же** пачку с нарастающей паузой (1 с x 2^n, потолок 30 с). Данные не теряются | в логе искать `Error`/`Warning` цикла (классы ошибок: п. ниже); устранить причину - сервис восстановится сам, перезапуск не нужен |
 | `broker_unavailable` | брокер не ответил на запрос метаданных за 2 с | проверить доступность `BootstrapServers`, сеть/UFW (на dev 9092 открыт для WireGuard и docker-сети, `infra/kafka/README.md`), состояние брокера |
 | `database_unavailable` | БД не ответила на `SELECT 1` за 2 с | проверить доступность БД, пароль, `SslMode`, pg_hba; пока БД недоступна, цикл тоже в `Degraded` |
@@ -344,12 +350,12 @@ kafka-console-consumer.sh --bootstrap-server <kafka-host>:9092 --topic ktm.event
 kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group ktm-data-saver
 ```
 
-Столбец `LAG` по партициям `ktm.events.raw`. Алертить нужно:
+Столбец `LAG` по партициям подписанных топиков `ktm.events.raw.<source>`. Алертить нужно:
 
 - рост лага при `ready = 200` (сервис не успевает; решение - масштабирование копиями, п. 4, и замер из
   `docs/test-protocols/data-saver-throughput.md` - будет создан в задаче 8);
 - ненулевой и растущий лаг при `ready = 503` / `ingestion_degraded` (сервис не пишет);
-- жёсткий предел: сообщения в `ktm.events.raw` хранятся 7 суток, лаг в часах не должен приближаться к этому сроку (иначе
+- жёсткий предел: сообщения в `ktm.events.raw.<source>` хранятся 7 суток, лаг в часах не должен приближаться к этому сроку (иначе
   непрочитанные сообщения будут удалены брокером).
 
 Пороговые значения лага (число сообщений / время) в ТЗ и ADR не заданы - **уточнить** у лида.
@@ -466,8 +472,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 
 ## 12. Топик `ktm.events.dlq` и повторная обработка
 
-Решения - `docs/adr/0006-data-saver-dlq-and-reprocessing.md`. Статус документа: admin-API реализован (группа 5); коды, тела и поля ответов сверены с HTTP-тестами (`Ktm.DataSaver.Tests/Admin`);
-примеры `curl` **не проверены** на стенде, проверить при приёмке (`docs/test-protocols/data-saver-dlq-reprocessing.md`).
+Решения - `docs/adr/0006-data-saver-dlq-and-reprocessing.md`. Примеры сверяются с контрактом `docs/api/data-saver-admin.openapi.json`; команды `curl` **не проверены выполнением**. Тестирование admin API и UI исключено из приёмки решением пользователя (`docs/test-protocols/data-saver-dlq-reprocessing.md`).
 
 ### 12.1. Что куда попадает
 
@@ -479,7 +484,7 @@ kafka-consumer-groups.sh --bootstrap-server <kafka-host>:9092 --describe --group
 | Не JSON, не по схеме, отказ C5 или правила | штатная отбраковка в `ktm.events.rejected` (п. 6), попыток нет, в `dlq` не уходит |
 
 Различие: **`rejected` - данные плохие** (решение о данных принято), **`dlq` - обработать сообщение не удалось** (решения о данных нет; сообщение
-сохранено целиком для разбора и повторной обработки после починки кода или данных). Оба топика хранятся 30 суток; `ktm.events.raw` - 7 суток.
+сохранено целиком для разбора и повторной обработки после починки кода или данных). Оба топика хранятся 30 суток; `ktm.events.raw.<source>` - 7 суток.
 Offset ядовитого сообщения фиксируется **только после подтверждения брокером** публикации в `dlq`, поэтому партиция не блокируется, а данные не теряются.
 Оценки сотрудников попадание в `dlq` не меняет: это технический инцидент обработки.
 
@@ -505,7 +510,7 @@ kafka-console-consumer.sh --bootstrap-server <kafka-host>:9092 --topic ktm.event
   --from-beginning --property print.headers=true --property print.key=true
 ```
 
-Тело содержит исходное сообщение (идентификатор человека - ПДн): доступ к топику - как к `ktm.events.raw`. В лог и отчёт задачи тела не попадают.
+Тело содержит исходное сообщение (идентификатор человека - ПДн): доступ к топику - как к `ktm.events.raw.<source>`. В лог и отчёт задачи тела не попадают.
 
 ### 12.3. Предохранитель
 
@@ -542,7 +547,7 @@ kafka-console-consumer.sh --bootstrap-server <kafka-host>:9092 --topic ktm.event
 **Защита.** `/admin/*` (API, `/admin/ui/`, `/admin/swagger`, `/admin/openapi/v1.json`) работает на порту health **без аутентификации** (решение лида, принятый риск R-8):
 любой, кто достучался до порта, может запустить повторную обработку. **Требование к деплою: не публиковать `/admin` наружу** - ни через ingress, reverse proxy или
 внешний периметр, ни портом контейнера на внешнем интерфейсе (допустимо `127.0.0.1:<port>`); в `docker-compose.yml` порт Data Saver сейчас не опубликован. Проверка: изнутри
-контура `GET /admin/v1/sections` - `200`, снаружи - недоступно. Смягчение: одна задача одновременно, предел `MaxRateLimit`, права `ktm_app` (`SELECT, INSERT`), аудит каждого вызова в лог.
+контура проверяйте конфигурацию ingress и доступность порта извне, без вызова admin API/UI. Смягчение: одна задача одновременно, предел `MaxRateLimit`, права `ktm_app` (`SELECT, INSERT`), аудит запуска и отмены в лог.
 
 Адрес ниже - `http://<data-saver-host>:8080` (порт `DataSaver__Health__Port`, внутренняя сеть; в образе `curl` нет, вызывайте с хоста оператора).
 
@@ -559,7 +564,7 @@ kafka-console-consumer.sh --bootstrap-server <kafka-host>:9092 --topic ktm.event
 `maxRate` (необязательно, 1..`MaxRateLimit`, по умолчанию `MaxRatePerSecond`). Для `raw` обязательны `from` и `to`.
 
 ```bash
-BASE=http://<data-saver-host>:8080
+BASE='http://data-saver-host:8080' # замените адрес на внутренний адрес сервиса
 
 # dlq целиком (после починки причины); заголовок X-Requested-By необязателен, до 64 печатных символов, идёт в аудит-лог
 curl -sS -i -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' \

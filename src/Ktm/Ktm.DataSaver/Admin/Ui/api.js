@@ -10,7 +10,7 @@ export class ApiError extends Error {
 }
 
 async function request(method, path, body) {
-    const init = { method, cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json, application/problem+json' } };
+    const init = { method, cache: 'no-store', credentials: 'same-origin', headers: { Accept: 'application/json, application/problem+json' } };
     if (body !== undefined) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);

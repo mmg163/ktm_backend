@@ -126,8 +126,7 @@ public sealed class ReprocessJobManager(
             }
             catch (ReplaySourceException ex)
             {
-                // Текст ReplaySourceException по контракту не содержит данных сообщений.
-                logger.LogError("Reprocess job {JobId} was not started: the source is unavailable: {Reason}", job.Id, ex.Message);
+                logger.LogError("Reprocess job {JobId} was not started: {ErrorCode}, {ErrorType}", job.Id, ReprocessErrorCodes.SourceUnavailable, ex.GetType().Name);
                 return StartResult.SourceUnavailable();
             }
 

@@ -10,13 +10,13 @@
 в журнал:
 
 ```
-адаптеры источников -> Kafka ktm.events.raw -> Data Saver -> PostgreSQL + TimescaleDB, таблица ktm.events
+адаптеры источников -> Kafka ktm.events.raw.<source> -> Data Saver -> PostgreSQL + TimescaleDB, таблица ktm.events
                                                   |-> ktm.events.rejected (Kafka): не прошедшие проверку формата и подпавшие под правила отбраковки
                                                   '-> ktm.event_corrections: ссылки корректировок на исходные события
                               правила отбраковки: таблица ktm.rejection_rules (читается опросом, только SELECT)
 ```
 
-- читает `ktm.events.raw`, проверяет сообщение по `docs/api/kafka-event.schema.json`, затем по правилам отбраковки из таблицы
+- читает настроенные `ktm.events.raw.<source>`, проверяет сообщение по `docs/api/kafka-event.schema.json`, затем по правилам отбраковки из таблицы
   `ktm.rejection_rules` (раздел 7), пишет пачками;
 - offset коммитится только после COMMIT в БД; идемпотентность гарантирует уникальный ключ
   `(source, source_event_id, occurred_at)`, а не код (`ON CONFLICT DO NOTHING`);
@@ -39,7 +39,7 @@ flowchart LR
         DO[1С:ДО<br/>source 1c-do]
     end
 
-    K[(Kafka<br/>ktm.events.raw<br/>ktm.events.rejected)]
+    K[(Kafka<br/>ktm.events.raw.source<br/>ktm.events.rejected)]
 
     subgraph THIS[Этот solution]
         DS[Data Saver]
@@ -53,7 +53,7 @@ flowchart LR
     SKUD -.-> K
     CV -.-> K
     DO -.-> K
-    K -->|ktm.events.raw| DS
+    K -->|ktm.events.raw.source| DS
     DS -->|не прошли формат или сработало правило: ktm.events.rejected| K
     DS -->|пачками, идемпотентно| EV
     DS --> COR
@@ -69,7 +69,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph EXT[Внешние системы]
-        K[(Kafka<br/>ktm.events.raw<br/>ktm.events.rejected)]
+        K[(Kafka<br/>ktm.events.raw.source<br/>ktm.events.rejected)]
         PG[(PostgreSQL + TimescaleDB<br/>ktm.events, ktm.event_corrections)]
     end
 
@@ -177,7 +177,7 @@ flowchart LR
 
 | Переменная | По умолчанию | Назначение | Ограничения |
 |---|---|---|---|
-| `DataSaver__Kafka__Topic` | `ktm.events.raw` | входной топик | не пусто |
+| `DataSaver__Kafka__Topic` | `ktm.events.raw` | входной топик или regex с `^`; в развёртывании указать топик источника, например `ktm.events.raw.skud` | не пусто |
 | `DataSaver__Kafka__RejectedTopic` | `ktm.events.rejected` | топик отбракованных | не пусто |
 | `DataSaver__Kafka__DlqTopic` | `ktm.events.dlq` | топик сообщений, которые не удалось обработать (раздел 8) | не пусто |
 | `DataSaver__Kafka__GroupId` | `ktm-data-saver` | группа потребителей | не пусто |
@@ -352,8 +352,7 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 
 ## 8. Повторная обработка и DLQ
 
-Решения - `docs/adr/0006-data-saver-dlq-and-reprocessing.md`; регламент оператора - `docs/manuals/data-saver.md`, п. 12. Статус: написано до завершения
-реализации admin-API; коды, тела и поля ответов сверены с HTTP-тестами (`Ktm.DataSaver.Tests/Admin`), а сами `curl`-примеры **не проверены** на стенде (проверить при приёмке, протокол 7.4).
+Решения - `docs/adr/0006-data-saver-dlq-and-reprocessing.md`; регламент оператора - `docs/manuals/data-saver.md`, п. 12. Примеры сверяются с контрактом `docs/api/data-saver-admin.openapi.json`; команды `curl` **не проверены выполнением**. Тестирование admin API и UI исключено из приёмки решением пользователя.
 Размер пачки и число попыток задачи берутся из тех же настроек, что у рабочего цикла (`DataSaver__Batch__MaxSize`, `DataSaver__Dlq__MaxAttempts`); отдельных настроек у них нет.
 
 ### 8.1. `rejected` и `dlq`
@@ -378,7 +377,7 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 `http://<data-saver-host>:8080` (`DataSaver__Health__Port`).
 
 ```bash
-BASE=http://<data-saver-host>:8080
+BASE='http://data-saver-host:8080' # замените адрес на внутренний адрес сервиса
 
 # dlq (после исправления причины)
 curl -sS -i -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' -d '{"source":"dlq"}'

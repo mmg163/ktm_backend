@@ -287,11 +287,12 @@ public class ReprocessJobManagerTests
     private static ValueTask<ReplayOpenResult> Opened(IReplayReader reader) => ValueTask.FromResult(ReplayOpenResult.Opened(reader));
 
     [Fact]
-    public async Task MissingSourceTopic_IsSourceUnavailable_WithReasonInLog_AndSlotStaysFree()
+    public async Task MissingSourceTopic_IsSourceUnavailable_WithSafeLog_AndSlotStaysFree()
     {
+        const string marker = "sensitive-marker";
         var calls = 0;
         var rig = new OpenRig((_, _) => ++calls == 1
-            ? throw new ReplaySourceException("Kafka: topic 'x' not found")
+            ? throw new ReplaySourceException(marker)
             : Opened(new FakeReader([])));
 
         var missing = await rig.Manager.StartAsync(Rig.Request, CancellationToken.None);
@@ -299,7 +300,11 @@ public class ReprocessJobManagerTests
 
         Assert.Equal((StartStatus.SourceUnavailable, 0), (missing.Status, missing.Errors.Count));
         Assert.Equal(StartStatus.Started, next.Status);
-        Assert.Contains(rig.Logger.Collector.GetSnapshot(), r => r.Level == Microsoft.Extensions.Logging.LogLevel.Error && r.Message.Contains("topic 'x' not found"));
+        var entry = Assert.Single(rig.Logger.Collector.GetSnapshot(), r => r.Level == Microsoft.Extensions.Logging.LogLevel.Error);
+        Assert.Contains("source_unavailable", entry.Message);
+        Assert.Contains(nameof(ReplaySourceException), entry.Message);
+        Assert.DoesNotContain(marker, entry.Message);
+        Assert.DoesNotContain(entry.StructuredState!, item => item.Value?.ToString()?.Contains(marker) == true);
     }
 
     [Fact]
