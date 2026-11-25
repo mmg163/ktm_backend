@@ -388,7 +388,7 @@ curl -sS -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: applicatio
 
 # raw за период [from, to) по Kafka-timestamp, UTC с Z, оба обязательны
 curl -sS -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' \
-  -d '{"source":"raw","from":"2026-11-24T08:00:00Z","to":"2026-11-24T09:00:00Z"}'
+  -d '{"source":"raw","topic":"ktm.events.raw.skud","from":"2026-11-24T08:00:00Z","to":"2026-11-24T09:00:00Z"}'
 
 curl -sS "$BASE/admin/v1/reprocessing/jobs/<id>"                                  # статус и прогресс
 curl -sS "$BASE/admin/v1/reprocessing/jobs/<id>/report?limit=100&offset=0"        # отчёт (только после завершения; без тел)
@@ -396,6 +396,7 @@ curl -sS -i -X POST "$BASE/admin/v1/reprocessing/jobs/<id>/cancel"              
 curl -sS "$BASE/admin/v1/reprocessing/jobs"                                       # последние 10 задач
 ```
 
+- Для `raw` выберите `topic`: `ktm.events.raw.skud`, `ktm.events.raw.cv` или `ktm.events.raw.1c-do`. При regex в `DataSaver__Kafka__Topic` поле обязательно; при конкретном имени прежний запрос без `topic` продолжает работать. Для `dlq` и `rejected` поле запрещено.
 - `202` - задача принята (`Location`, `id` в теле); `400` - ProblemDetails с ошибками по полям (`errors`: неизвестный `source`, время без `Z`, `from >= to`, `raw` без `from`/`to`,
   `reason` для `raw` или длиннее 200 символов, `maxRate` вне `1..MaxRateLimit`, период раньше retention, тело не JSON - поле `body`); `409` - уже идёт другая задача (`activeJobId`);
   `503` - Kafka не ответила при открытии источника, задача не создана (повторите позже); `415` - не `application/json`. Отчёт до завершения - `409`, неизвестный `id` - `404`.

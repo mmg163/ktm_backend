@@ -45,8 +45,8 @@ public sealed class AdminAudit(ILogger<AdminAudit> logger, TimeProvider time)
     {
         var (remoteIp, requestedBy) = Caller(context);
         logger.LogInformation(
-            "Admin audit: reprocessing job start Result={Result} JobId={JobId} AtUtc={AtUtc} RemoteIp={RemoteIp} RequestedBy={RequestedBy} Source={Source} From={From} To={To} Reason={Reason} MaxRate={MaxRate}",
-            status, jobId, time.GetUtcNow(), remoteIp, requestedBy, request.Source, request.From, request.To, request.Reason, request.MaxRate);
+            "Admin audit: reprocessing job start Result={Result} JobId={JobId} AtUtc={AtUtc} RemoteIp={RemoteIp} RequestedBy={RequestedBy} Source={Source} Topic={Topic} From={From} To={To} Reason={Reason} MaxRate={MaxRate}",
+            status, jobId, time.GetUtcNow(), remoteIp, requestedBy, request.Source, request.Topic, request.From, request.To, request.Reason, request.MaxRate);
     }
 
     /// <summary>Запрос запуска, отвергнутый ещё до обращения к менеджеру (неверные аргументы): параметры не разобраны, пишется только факт вызова.</summary>

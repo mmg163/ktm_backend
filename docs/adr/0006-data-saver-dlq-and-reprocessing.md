@@ -214,7 +214,7 @@
 - **Swagger/OpenAPI для `/admin` сохраняется**: документ `/admin/openapi/v1.json` и Swagger UI `/admin/swagger` на том же порту (требование к деплою то же: не публиковать наружу). Флаг `DataSaver__Admin__SwaggerEnabled` (умолчание `true`) отключает Swagger UI и документ без пересборки.
 
 Сообщения `dlq` и `rejected` содержат исходные тело и ключ; координаты для логов и отчёта берутся из `ktm-source-*` (при отсутствии - фактические с пометкой).
-Источник `raw` читает `DataSaver__Kafka__Topic`.
+Источник `raw` читает конкретный `topic` из запроса: `ktm.events.raw.skud`, `ktm.events.raw.cv` или `ktm.events.raw.1c-do`. При отсутствии `topic` сохраняется прежнее поведение с конкретным `DataSaver__Kafka__Topic`; при regex в этой настройке выбор `topic` обязателен. Поле `topic` запрещено для `dlq` и `rejected`.
 
 ### 2.7. Окно времени для `raw` и выбор подмножества (В-3)
 

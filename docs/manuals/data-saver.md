@@ -66,8 +66,8 @@
 
 Значение без `^` обозначает точное имя, а не алиас: `ktm.events.raw` не включает топики источников.
 Для подписки на несколько топиков Kafka-клиент принимает регулярное выражение, например
-`^ktm\.events\.raw\..+`; этот режим на стенде не проверен. Повторная обработка `raw` использует
-значение `Topic` как конкретное имя и с таким выражением не работает.
+`^ktm\.events\.raw\..+`; этот режим на стенде не проверен. При повторной обработке `raw` для такой
+подписки укажите конкретный топик источника в форме или поле `topic` запроса (п. 12.5).
 
 Без вашего участия фиксированы: чтение с `earliest` при отсутствии offset группы, автокоммит выключен, стратегия
 распределения `cooperative-sticky`, автосоздание топиков выключено, producer `rejected` идемпотентный с `acks=all`.
@@ -561,7 +561,7 @@ kafka-console-consumer.sh --bootstrap-server <kafka-host>:9092 --topic ktm.event
 | `GET /admin/v1/sections` | список разделов admin | `200` |
 
 Тело запуска: `source` (`dlq`, `rejected`, `raw`), `from`/`to` (RFC 3339 UTC, обязательно с `Z`; полуинтервал `[from, to)`), `reason` (необязательно, только `dlq`/`rejected`),
-`maxRate` (необязательно, 1..`MaxRateLimit`, по умолчанию `MaxRatePerSecond`). Для `raw` обязательны `from` и `to`.
+`maxRate` (необязательно, 1..`MaxRateLimit`, по умолчанию `MaxRatePerSecond`). Для `raw` обязательны `from` и `to`; поле `topic` выбирает один из `ktm.events.raw.skud`, `ktm.events.raw.cv`, `ktm.events.raw.1c-do`. В UI используется фиксированный список. Для `dlq`/`rejected` поле запрещено. Если `topic` не задан, используется конкретное имя из `DataSaver__Kafka__Topic`; если там regex, `topic` обязателен.
 
 ```bash
 BASE='http://data-saver-host:8080' # замените адрес на внутренний адрес сервиса
@@ -580,7 +580,7 @@ curl -sS -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: applicatio
 
 # raw за период (по Kafka-timestamp сообщения, оба края обязательны)
 curl -sS -X POST "$BASE/admin/v1/reprocessing/jobs" -H 'Content-Type: application/json' \
-  -d '{"source":"raw","from":"2026-11-24T08:00:00Z","to":"2026-11-24T09:00:00Z"}'
+  -d '{"source":"raw","topic":"ktm.events.raw.skud","from":"2026-11-24T08:00:00Z","to":"2026-11-24T09:00:00Z"}'
 
 # статус и прогресс (id - из ответа 202 / заголовка Location)
 curl -sS "$BASE/admin/v1/reprocessing/jobs/<id>"

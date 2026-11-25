@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Ktm.DataSaver.Configuration;
 using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Infrastructure.Kafka;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.Extensions.Options;
@@ -104,6 +105,7 @@ public sealed class ReprocessingSection : IAdminSection
         HttpContext context,
         ReprocessJobManager manager,
         IOptions<ReprocessOptions> options,
+        IOptions<KafkaOptions> kafkaOptions,
         AdminAudit audit,
         CancellationToken cancellationToken)
     {
@@ -125,7 +127,7 @@ public sealed class ReprocessingSection : IAdminSection
         }
 
         var settings = options.Value;
-        var (request, errors) = Parse(body ?? new StartJobRequest(), settings);
+        var (request, errors) = Parse(body ?? new StartJobRequest(), settings, kafkaOptions.Value.Topic);
         if (errors.Count > 0)
         {
             return Invalid(context, audit, errors);
@@ -230,7 +232,7 @@ public sealed class ReprocessingSection : IAdminSection
     /// Разбор тела: строки -> типизированный запрос. Ошибки разбора и ошибки значений ядра собираются вместе (по полям); для поля,
     /// которое не разобрано, ошибки ядра не добавляются (они были бы следствием, а не причиной).
     /// </summary>
-    internal static (ReprocessRequest? Request, IReadOnlyList<ReprocessValidationError> Errors) Parse(StartJobRequest body, ReprocessOptions options)
+    internal static (ReprocessRequest? Request, IReadOnlyList<ReprocessValidationError> Errors) Parse(StartJobRequest body, ReprocessOptions options, string? configuredTopic = null)
     {
         var errors = new List<ReprocessValidationError>();
 
@@ -255,7 +257,9 @@ public sealed class ReprocessingSection : IAdminSection
             errors.Add(new ReprocessValidationError("reason", $"reason must not exceed {MaxReasonLength.ToString(CultureInfo.InvariantCulture)} characters."));
         }
 
-        var request = new ReprocessRequest(source, from, to, body.Reason, body.MaxRate ?? options.MaxRatePerSecond);
+        if (source == ReprocessSource.Raw && body.Topic is null && configuredTopic?.StartsWith('^') == true)
+            errors.Add(new ReprocessValidationError("topic", "topic is required for a regex subscription."));
+        var request = new ReprocessRequest(source, from, to, body.Reason, body.MaxRate ?? options.MaxRatePerSecond, body.Topic);
         var explicitFields = errors.Select(e => e.Field).ToHashSet(StringComparer.Ordinal);
         errors.AddRange(ReprocessRequestValidator.Validate(request, options.MaxRateLimit).Where(e => !explicitFields.Contains(e.Field)));
         return errors.Count == 0 ? (request, errors) : (null, errors);

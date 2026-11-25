@@ -19,7 +19,13 @@ public enum ReprocessSource
 /// Запрос повторной обработки. <c>From</c>/<c>To</c> - период по Kafka-timestamp сообщения, полуинтервал <c>[From, To)</c>, UTC;
 /// <c>Reason</c> - фильтр по коду причины (только <c>dlq</c>/<c>rejected</c>); <c>MaxRate</c> - сообщений в секунду.
 /// </summary>
-public sealed record ReprocessRequest(ReprocessSource Source, DateTimeOffset? From, DateTimeOffset? To, string? Reason, int MaxRate);
+public sealed record ReprocessRequest(ReprocessSource Source, DateTimeOffset? From, DateTimeOffset? To, string? Reason, int MaxRate, string? Topic = null);
+
+/// <summary>Имена входных топиков источников.</summary>
+public static class RawTopicName
+{
+    public static bool IsValid(string? name) => name is "ktm.events.raw.skud" or "ktm.events.raw.cv" or "ktm.events.raw.1c-do";
+}
 
 /// <summary>Ошибка аргумента запроса: имя поля в camelCase (как в теле запроса) и понятное описание, без данных сообщений.</summary>
 public sealed record ReprocessValidationError(string Field, string Message);
@@ -49,6 +55,10 @@ public static class ReprocessRequestValidator
         ArgumentNullException.ThrowIfNull(request);
 
         var errors = new List<ReprocessValidationError>();
+        if (request.Topic is not null && (request.Source != ReprocessSource.Raw || !RawTopicName.IsValid(request.Topic)))
+        {
+            errors.Add(new ReprocessValidationError("topic", "topic must be a raw source topic and is allowed only for source raw."));
+        }
         if (!Enum.IsDefined(request.Source))
         {
             errors.Add(new ReprocessValidationError("source", "Unknown source. Allowed: dlq, rejected, raw."));

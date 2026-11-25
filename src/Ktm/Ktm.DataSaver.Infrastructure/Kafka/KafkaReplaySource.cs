@@ -51,7 +51,7 @@ public sealed class KafkaReplaySource(KafkaOptions options, ILogger<KafkaReplayS
         {
             ReprocessSource.Dlq => options.DlqTopic,
             ReprocessSource.Rejected => options.RejectedTopic,
-            _ => options.Topic,
+            _ => request.Topic ?? options.Topic,
         };
 
         var nativeLog = new KafkaNativeLogBridge(logger, throttle);

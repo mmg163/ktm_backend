@@ -63,6 +63,17 @@ public sealed class KafkaReplaySourceTests(KafkaFixture kafka)
     private static ReprocessRequest Raw(DateTimeOffset from, DateTimeOffset to) => new(ReprocessSource.Raw, from, to, null, 100);
 
     [Fact]
+    public async Task Raw_SelectedTopic_OverridesRegexSubscription()
+    {
+        var topic = await kafka.CreateTopicAsync("ktm.events.raw.cv");
+        await ProduceAsync(topic, "selected", T);
+        var options = kafka.Options("^ktm\\.events\\.raw\\..+", "topic-selection");
+        var opened = await Source(options.Topic).OpenAsync(Raw(T, T2) with { Topic = topic }, CancellationToken.None);
+        await using var reader = opened.Reader!;
+        Assert.Equal(["selected"], (await ReadAllAsync(reader)).Select(m => Encoding.UTF8.GetString(m.Message.Body.Span)));
+    }
+
+    [Fact]
     public async Task Raw_PeriodIsHalfOpenByKafkaTimestamp_WithBoundaries()
     {
         var topic = await kafka.CreateTopicAsync("ktm.events.raw");

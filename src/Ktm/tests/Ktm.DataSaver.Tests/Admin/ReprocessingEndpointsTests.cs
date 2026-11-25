@@ -6,6 +6,7 @@ using Ktm.DataSaver.Core.Reprocessing;
 using Ktm.DataSaver.Tests.Reprocessing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using static Ktm.DataSaver.Tests.Reprocessing.ReprocessFixture;
 
 namespace Ktm.DataSaver.Tests.Admin;
@@ -13,6 +14,45 @@ namespace Ktm.DataSaver.Tests.Admin;
 /// <summary>Раздел reprocessing (tasks 5.2): статусы и тела по спеку, ProblemDetails, пагинация отчёта, аудит без тел.</summary>
 public sealed class ReprocessingEndpointsTests
 {
+    [Theory]
+    [InlineData("ktm.events.raw.skud")]
+    [InlineData("ktm.events.raw.cv")]
+    [InlineData("ktm.events.raw.1c-do")]
+    public async Task RawTopic_IsPassedToReplayAndReturnedInJob(string topic)
+    {
+        ReprocessRequest? observed = null;
+        await using var host = await AdminTestHost.StartAsync(r => { observed = r; return ReplayOpenResult.Opened(new FakeReader([])); });
+        using var response = await host.Client.PostAsJsonAsync(Jobs, new { source = "raw", topic, from = "2026-01-01T00:00:00Z", to = "2026-01-02T00:00:00Z" });
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(topic, observed!.Topic);
+        Assert.Equal(observed.Topic, (await Json.OfAsync(response)).GetProperty("parameters").GetProperty("topic").GetString());
+    }
+
+    [Theory]
+    [InlineData("dlq", "ktm.events.raw.cv")]
+    [InlineData("raw", "other.topic")]
+    [InlineData("raw", "^ktm.events.raw.*")]
+    [InlineData("raw", "ktm.events.raw.other")]
+    public async Task InvalidTopic_IsRejected(string source, string topic)
+    {
+        await using var host = await AdminTestHost.StartAsync(AdminTestHost.Messages());
+        using var response = await host.Client.PostAsJsonAsync(Jobs, new { source, topic, from = "2026-01-01T00:00:00Z", to = "2026-01-02T00:00:00Z" });
+        Assert.True((await ErrorsAsync(response)).TryGetProperty("topic", out _));
+    }
+
+    [Fact]
+    public async Task RawWithoutTopic_RequiresSelectionForRegex_ButAcceptsConcreteConfiguration()
+    {
+        const string body = """{"source":"raw","from":"2026-01-01T00:00:00Z","to":"2026-01-02T00:00:00Z"}""";
+        await using var regex = await AdminTestHost.StartAsync(AdminTestHost.Messages(), configure: s => s.AddSingleton(
+            Microsoft.Extensions.Options.Options.Create(new Ktm.DataSaver.Infrastructure.Kafka.KafkaOptions { Topic = "^ktm.events.raw.*" })));
+        using var missing = await regex.PostJobAsync(body);
+        Assert.True((await ErrorsAsync(missing)).TryGetProperty("topic", out _));
+        await using var concrete = await AdminTestHost.StartAsync(AdminTestHost.Messages());
+        using var compatible = await concrete.PostJobAsync(body);
+        Assert.Equal(HttpStatusCode.Accepted, compatible.StatusCode);
+    }
+
     private const string Jobs = "/admin/v1/reprocessing/jobs";
 
     private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status)

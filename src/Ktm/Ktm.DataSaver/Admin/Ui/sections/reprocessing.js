@@ -98,6 +98,9 @@ export default {
 
         const formError = el('div', { hidden: '' });
         const source = el('select', {}, ...['dlq', 'rejected', 'raw'].map(s => el('option', { value: s, text: s })));
+        const topic = el('select', {}, el('option', { value: '', text: 'Выберите топик' }),
+            ...['ktm.events.raw.skud', 'ktm.events.raw.cv', 'ktm.events.raw.1c-do'].map(name => el('option', { value: name, text: name })));
+        const topicLabel = el('label', { hidden: '' }, 'Топик источника', topic);
         const from = el('input', { type: 'datetime-local', step: '1' });
         const to = el('input', { type: 'datetime-local', step: '1' });
         const reason = el('input', { type: 'text', maxlength: '200', autocomplete: 'off' });
@@ -106,6 +109,7 @@ export default {
 
         const form = el('form', { novalidate: '' },
             el('label', {}, 'Источник', source),
+            topicLabel,
             el('label', {}, el('span', { text: 'С (UTC)' }), from, el('span', { class: 'hint', text: 'для raw обязательно' })),
             el('label', {}, el('span', { text: 'По (UTC)' }), to),
             el('label', {}, el('span', { text: 'Причина (reason)' }), reason, el('span', { class: 'hint', text: 'не для raw' })),
@@ -122,6 +126,7 @@ export default {
 
         function updateReasonState() {
             reason.disabled = source.value === 'raw';
+            topicLabel.hidden = source.value !== 'raw';
             if (reason.disabled) {
                 reason.value = '';
             }
@@ -138,6 +143,9 @@ export default {
                 errors.push('для raw нужно указать оба времени: с и по');
             } else if ((f && !t) || (!f && t)) {
                 errors.push('укажите оба времени или ни одного');
+            }
+            if (source.value === 'raw' && !topic.value) {
+                errors.push('выберите доступный топик источника');
             }
             if (f && t && Date.parse(f) >= Date.parse(t)) {
                 errors.push('«С» должно быть раньше «По»');
@@ -161,6 +169,7 @@ export default {
             }
 
             const body = { source: source.value };
+            if (source.value === 'raw') { body.topic = topic.value; }
             if (f) { body.from = f; }
             if (t) { body.to = t; }
             if (reason.value.trim() !== '') { body.reason = reason.value.trim(); }
@@ -168,6 +177,7 @@ export default {
 
             const ok = await confirmDialog('Запустить повторную обработку?', [
                 ['Источник', body.source],
+                ['Топик', body.topic ?? '-'],
                 ['С (UTC)', body.from ?? 'не ограничено'],
                 ['По (UTC)', body.to ?? 'не ограничено'],
                 ['Причина', body.reason ?? '-'],
@@ -204,9 +214,9 @@ export default {
                     return;
                 }
                 jobsBox.replaceChildren(table(
-                    ['Id', 'Источник', 'Состояние', 'Итог', 'Начало', ''],
+                    ['Id', 'Источник', 'Топик', 'Состояние', 'Итог', 'Начало', ''],
                     items.map(j => [
-                        cell(j.id), cell(j.parameters?.source ?? j.source), cell(j.state), cell(j.outcome), cell(j.startedAt),
+                        cell(j.id), cell(j.parameters?.source ?? j.source), cell(j.parameters?.topic), cell(j.state), cell(j.outcome), cell(j.startedAt),
                         el('td', {}, el('button', { type: 'button', class: 'link', text: 'Открыть', onclick: () => select(j.id) })),
                     ])));
             } catch (e) {

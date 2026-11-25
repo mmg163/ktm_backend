@@ -8,6 +8,9 @@ public sealed record StartJobRequest
     /// <summary>Источник: <c>dlq</c>, <c>rejected</c> или <c>raw</c>.</summary>
     public string? Source { get; init; }
 
+    /// <summary>Для raw: ktm.events.raw.skud, ktm.events.raw.cv или ktm.events.raw.1c-do; обязательно при regex-подписке. Для других источников запрещено.</summary>
+    public string? Topic { get; init; }
+
     /// <summary>Начало периода по Kafka-timestamp сообщения (включительно). Для <c>raw</c> обязательно.</summary>
     public string? From { get; init; }
 
@@ -27,7 +30,8 @@ public sealed record StartJobRequest
 /// <param name="To">Конец периода (UTC, не включая) либо <c>null</c>.</param>
 /// <param name="Reason">Фильтр по коду причины либо <c>null</c>.</param>
 /// <param name="MaxRate">Скорость, сообщений в секунду.</param>
-public sealed record JobParameters(string Source, DateTimeOffset? From, DateTimeOffset? To, string? Reason, int MaxRate);
+/// <param name="Topic">Выбранный входной топик либо <c>null</c>.</param>
+public sealed record JobParameters(string Source, DateTimeOffset? From, DateTimeOffset? To, string? Reason, int MaxRate, string? Topic);
 
 /// <summary>Ошибка завершения задачи в состоянии <c>Failed</c>.</summary>
 /// <param name="Code"><c>db_unavailable</c>, <c>source_unavailable</c> или <c>internal</c>.</param>
@@ -82,7 +86,7 @@ public sealed record JobResponse(
         job.State,
         job.Outcome,
         job.ErrorCode is null ? null : new JobError(job.ErrorCode),
-        new JobParameters(SourceName(job.Request.Source), job.Request.From, job.Request.To, job.Request.Reason, job.Request.MaxRate),
+        new JobParameters(SourceName(job.Request.Source), job.Request.From, job.Request.To, job.Request.Reason, job.Request.MaxRate, job.Request.Topic),
         job.Counters.Read,
         job.Counters.SkippedByFilter,
         job.Counters.Written,

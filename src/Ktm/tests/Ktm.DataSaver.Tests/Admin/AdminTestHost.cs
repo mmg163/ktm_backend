@@ -89,6 +89,7 @@ internal sealed class AdminTestHost : IAsyncDisposable
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(manager);
         builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ktm.DataSaver.Configuration.ReprocessOptions()));
+        builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ktm.DataSaver.Infrastructure.Kafka.KafkaOptions()));
         builder.Services.AddAdmin(configuration);
         builder.Services.AddBuiltInAdminSections();
         configure?.Invoke(builder.Services);
