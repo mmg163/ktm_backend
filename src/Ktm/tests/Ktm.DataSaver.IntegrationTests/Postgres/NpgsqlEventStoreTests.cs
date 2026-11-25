@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Resilience;
 using Ktm.DataSaver.Infrastructure.Postgres;
+using Ktm.DataSaver.IntegrationTests.Support;
 using Npgsql;
 using static Ktm.DataSaver.IntegrationTests.Postgres.TestEvents;
 
@@ -407,6 +408,97 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
 
         var ex = await Assert.ThrowsAsync<PostgresStoreException>(
             () => store.WriteBatchAsync([Event(NewSource(), "a", At(0))], Now, CancellationToken.None));
+
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(ex));
+    }
+
+    [Fact]
+    public async Task Poison_constraint_rejects_only_the_poison_event_with_23514_and_ordinary_events_are_written()
+    {
+        var source = NewSource();
+        await using var poison = await PoisonConstraint.AddAsync(db.AdminConnectionString);
+
+        var ex = await Assert.ThrowsAsync<PostgresStoreException>(
+            () => Store().WriteBatchAsync([Event(source, "ok", At(0)), Event(source, PoisonConstraint.PoisonId, At(1))], Now, CancellationToken.None));
+        await Store().WriteBatchAsync([Event(source, "ok", At(0))], Now, CancellationToken.None);
+
+        Assert.Equal(("23514", PoisonConstraint.Name, WriteErrorClass.Data), (ex.SqlState, ex.ConstraintName, WriteErrorClassifier.Classify(ex)));
+        Assert.Equal("Npgsql.PostgresException", DeadLetterInfo.FromException(ex, "write", 4, Now).ExceptionType);
+        Assert.Equal(["ok"], (await ReadEventsAsync(source)).Select(r => r.SourceEventId));
+
+        // «Исправление причины»: после снятия ограничения то же событие записывается.
+        await poison.DropAsync();
+        await Store().WriteBatchAsync([Event(source, PoisonConstraint.PoisonId, At(1))], Now, CancellationToken.None);
+        Assert.Equal(["ok", PoisonConstraint.PoisonId], (await ReadEventsAsync(source)).Select(r => r.SourceEventId));
+    }
+
+    // Фиксирует итоговый список инфраструктурных и «сообщенческих» исключений на реальном драйвере (ADR-0006 п. 2.2, R-1).
+    [Fact]
+    public async Task Value_that_cannot_be_serialized_is_unexpected_write_value_error_not_infrastructure()
+    {
+        var source = NewSource();
+        var bad = Event(source, "big-version", At(0)) with { SchemaVersion = 70000 };
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => Store().WriteBatchAsync([bad], Now, CancellationToken.None));
+
+        Assert.Equal(WriteErrorClass.Unexpected, WriteErrorClassifier.Classify(ex));
+        Assert.Equal(DeadLetterReasons.WriteValueError, DeadLetterInfo.FromException(ex, "write", 4, Now).Reason);
+    }
+
+    [Fact]
+    public async Task Exhausted_connection_pool_is_infrastructure_and_never_poison()
+    {
+        var builder = new NpgsqlConnectionStringBuilder(db.AppConnectionString) { MaxPoolSize = 1, Timeout = 1, Pooling = true };
+        await using var dataSource = NpgsqlDataSource.Create(builder.ConnectionString);
+        await using var held = await dataSource.OpenConnectionAsync();
+        var store = new NpgsqlEventStore(dataSource, new FixedTrustProvider(100));
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(
+            () => store.WriteBatchAsync([Event(NewSource(), "a", At(0))], Now, CancellationToken.None));
+
+        Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(ex));
+    }
+
+    // M5 (review-fixes-1): обрыв соединения посреди выполнения транзакции - инфраструктура, а не свойство сообщения.
+    // Запись блокируется незавершённой вставкой того же ключа в другой транзакции, затем бэкенд записи завершается pg_terminate_backend.
+    [Fact]
+    public async Task Backend_terminated_in_the_middle_of_a_write_is_infrastructure_and_never_poison()
+    {
+        var source = NewSource();
+        var appName = "ktm-m5-" + Guid.NewGuid().ToString("N")[..12];
+        var builder = new NpgsqlConnectionStringBuilder(db.AppConnectionString) { ApplicationName = appName, Pooling = false };
+        await using var dataSource = NpgsqlDataSource.Create(builder.ConnectionString);
+        var store = new NpgsqlEventStore(dataSource, new FixedTrustProvider(100));
+        var blocked = Event(source, "blocked", At(0));
+
+        await using var blocker = await db.AppDataSource.OpenConnectionAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+        await using (var insert = new NpgsqlCommand(
+            """
+            INSERT INTO ktm.events (event_id, source, source_event_id, occurred_at, received_at, event_type, device_id, external_person_id, trust, payload, schema_version)
+            VALUES (@id, @s, @e, @o, @r, 'access', NULL, 'p', 100, '{}'::jsonb, 1)
+            """, blocker, blockerTransaction))
+        {
+            insert.Parameters.AddWithValue("id", Guid.NewGuid());
+            insert.Parameters.AddWithValue("s", blocked.Source);
+            insert.Parameters.AddWithValue("e", blocked.SourceEventId);
+            insert.Parameters.AddWithValue("o", blocked.OccurredAt.UtcDateTime);
+            insert.Parameters.AddWithValue("r", Now.UtcDateTime);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        var write = store.WriteBatchAsync([blocked], Now, CancellationToken.None);
+        await using var admin = new NpgsqlConnection(db.AdminConnectionString);
+        await admin.OpenAsync();
+        for (var i = 0; i < 50 && !write.IsCompleted; i++)
+        {
+            await using var terminate = new NpgsqlCommand("SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = @n AND wait_event_type = 'Lock') t", admin);
+            terminate.Parameters.AddWithValue("n", appName);
+            if ((long)(await terminate.ExecuteScalarAsync())! > 0) break;
+            await Task.Delay(100);
+        }
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => write);
 
         Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(ex));
     }

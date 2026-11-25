@@ -1,4 +1,7 @@
+using Ktm.DataSaver.Admin;
 using Ktm.DataSaver.Configuration;
+using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Hosting;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,11 +23,26 @@ public class DataSaverOptionsTests
         ["DataSaver:Postgres:Password"] = Secret,
     };
 
+    private sealed class StubLifetime : IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication()
+        {
+        }
+    }
+
     private static ServiceProvider Build(Dictionary<string, string?> values)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddMetrics();
+        services.AddSingleton<IHostApplicationLifetime, StubLifetime>();
         services.AddDataSaver(configuration);
         return services.BuildServiceProvider();
     }
@@ -200,6 +218,77 @@ public class DataSaverOptionsTests
         Assert.Contains("DataSaver__Postgres__CommandTimeoutSeconds", message);
         Assert.Contains("DataSaver__Kafka__ProducerMessageTimeoutMs", message);
         Assert.DoesNotContain(Secret, message);
+    }
+
+    [Theory]
+    [InlineData("DataSaver:Dlq:MaxAttempts", "0", "DataSaver__Dlq__MaxAttempts")]
+    [InlineData("DataSaver:Dlq:MaxAttempts", "21", "DataSaver__Dlq__MaxAttempts")]
+    [InlineData("DataSaver:Dlq:BreakerThreshold", "0", "DataSaver__Dlq__BreakerThreshold")]
+    [InlineData("DataSaver:Dlq:BreakerThreshold", "10001", "DataSaver__Dlq__BreakerThreshold")]
+    [InlineData("DataSaver:Kafka:DlqTopic", " ", "DataSaver__Kafka__DlqTopic")]
+    public void InvalidDlqSettings_FailStartupNamingTheSettingWithoutSecrets(string key, string value, string expectedName)
+    {
+        var values = Valid();
+        values[key] = value;
+
+        var message = StartupFailure(values);
+
+        Assert.Contains(expectedName, message);
+        Assert.DoesNotContain(Secret, message);
+    }
+
+    [Theory]
+    [InlineData("DataSaver:Dlq:MaxAttempts", "1")]
+    [InlineData("DataSaver:Dlq:MaxAttempts", "20")]
+    [InlineData("DataSaver:Dlq:BreakerThreshold", "1")]
+    [InlineData("DataSaver:Dlq:BreakerThreshold", "10000")]
+    public void DlqSettingsAtRangeBoundaries_AreAccepted(string key, string value)
+    {
+        var values = Valid();
+        values[key] = value;
+        using var provider = Build(values);
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+    }
+
+    [Theory]
+    [InlineData("DataSaver:Reprocess:MaxRateLimit", "0", "DataSaver__Reprocess__MaxRateLimit")]
+    [InlineData("DataSaver:Reprocess:MaxRateLimit", "10001", "DataSaver__Reprocess__MaxRateLimit")]
+    [InlineData("DataSaver:Reprocess:MaxRatePerSecond", "0", "DataSaver__Reprocess__MaxRatePerSecond")]
+    [InlineData("DataSaver:Reprocess:MaxRatePerSecond", "401", "DataSaver__Reprocess__MaxRatePerSecond")]
+    [InlineData("DataSaver:Reprocess:MaxUnavailableSeconds", "0", "DataSaver__Reprocess__MaxUnavailableSeconds")]
+    [InlineData("DataSaver:Reprocess:MaxUnavailableSeconds", "86401", "DataSaver__Reprocess__MaxUnavailableSeconds")]
+    public void InvalidReprocessSettings_FailStartupNamingTheSettingWithoutSecrets(string key, string value, string expectedName)
+    {
+        var values = Valid();
+        values[key] = value;
+
+        var message = StartupFailure(values);
+
+        Assert.Contains(expectedName, message);
+        Assert.DoesNotContain(Secret, message);
+    }
+
+    [Fact]
+    public void ReprocessSettings_TakeMaxAttemptsFromDlqAndBatchSizeFromBatch_AndDefaultsAreFromAdr()
+    {
+        var values = Valid();
+        values["DataSaver:Dlq:MaxAttempts"] = "7";
+        values["DataSaver:Batch:MaxSize"] = "123";
+        using var provider = Build(values);
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+        var settings = provider.GetRequiredService<ReprocessSettings>();
+        var options = provider.GetRequiredService<IOptions<ReprocessOptions>>().Value;
+
+        Assert.Equal((7, 123), (settings.MaxAttempts, settings.BatchSize));
+        Assert.Equal((200, 400, 600), (options.MaxRatePerSecond, options.MaxRateLimit, options.MaxUnavailableSeconds));
+        Assert.Equal((400, TimeSpan.FromSeconds(600)), (settings.MaxRateLimit, settings.MaxUnavailable));
+        Assert.True(provider.GetRequiredService<IOptions<AdminOptions>>().Value.SwaggerEnabled);
+        // Сервис и его останов зарегистрированы: задача отменяется вместе с host.
+        Assert.NotNull(provider.GetRequiredService<ReprocessJobManager>());
+        Assert.Contains(provider.GetServices<IHostedService>(), s => s is ReprocessJobHostedService);
+        Assert.Contains(provider.GetServices<IAdminSection>(), s => s.Id == "reprocessing");
     }
 
     [Fact]

@@ -28,7 +28,22 @@ public class DataSaverWorkerTests
         public void Dispose() => Disposals++;
     }
 
-    private static (DataSaverWorker Worker, RecordingTerminator Terminator, FakeLogger<DataSaverWorker> Logger) Create(Harness h, Meter meter)
+    private sealed record Created(
+        DataSaverWorker Worker,
+        RecordingTerminator Terminator,
+        FakeLogger<DataSaverWorker> Logger,
+        KafkaRejectionPublisher Rejection,
+        KafkaDeadLetterPublisher DeadLetter)
+    {
+        public void Deconstruct(out DataSaverWorker worker, out RecordingTerminator terminator, out FakeLogger<DataSaverWorker> logger)
+        {
+            worker = Worker;
+            terminator = Terminator;
+            logger = Logger;
+        }
+    }
+
+    private static Created Create(Harness h, Meter meter)
     {
         var terminator = new RecordingTerminator();
         var logger = new FakeLogger<DataSaverWorker>();
@@ -36,14 +51,18 @@ public class DataSaverWorkerTests
         var options = new KafkaOptions { BootstrapServers = "localhost:1" };
         var throttle = new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval);
         var handler = new KafkaFatalErrorHandler(terminator, new FakeLogger<KafkaFatalErrorHandler>(), throttle);
+        var rejection = new KafkaRejectionPublisher(options, handler, new FakeLogger<KafkaRejectionPublisher>(), throttle);
+        var deadLetter = new KafkaDeadLetterPublisher(options, handler, new FakeLogger<KafkaDeadLetterPublisher>(), throttle);
         var worker = new DataSaverWorker(
             h.Loop,
             new FakeConsumer(),
-            new KafkaRejectionPublisher(options, handler, new FakeLogger<KafkaRejectionPublisher>(), throttle),
+            rejection,
+            deadLetter,
+            h.Breaker,
             new DataSaverMetrics(meter),
             terminator,
             logger);
-        return (worker, terminator, logger);
+        return new Created(worker, terminator, logger, rejection, deadLetter);
     }
 
     [Fact]
@@ -65,6 +84,21 @@ public class DataSaverWorkerTests
         Assert.Equal([DataSaverWorker.LoopFailureExitCode], terminator.ExitCodes);
         var critical = Assert.Single(logger.Collector.GetSnapshot(), r => r.Level == LogLevel.Critical);
         Assert.IsType<InvalidOperationException>(critical.Exception);
+    }
+
+    [Fact]
+    public async Task Shutdown_ClosesBothProducers_RejectedAndDeadLetter()
+    {
+        var h = new Harness();
+        h.StopWhenQueueDrained();
+        using var meter = new Meter("test-" + Guid.NewGuid());
+        var created = Create(h, meter);
+
+        await created.Worker.StartAsync(h.Stop.Token);
+        await created.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.True(created.Rejection.IsDisposed);
+        Assert.True(created.DeadLetter.IsDisposed);
     }
 
     [Fact]

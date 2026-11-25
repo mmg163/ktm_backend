@@ -1,0 +1,7 @@
+@baseUrl = http://localhost:8080
+
+### Повторно обработать один топик
+POST {{baseUrl}}/admin/v1/reprocessing/jobs
+Content-Type: application/json
+
+{"source":"raw","topic":"ktm.events.raw.skud","from":"2026-11-24T08:00:00Z","to":"2026-11-24T09:00:00Z"}

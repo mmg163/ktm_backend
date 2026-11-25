@@ -13,16 +13,6 @@ namespace Ktm.DataSaver.Infrastructure.Kafka;
 /// </summary>
 public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
 {
-    private static readonly HashSet<ErrorCode> NonTransient =
-    [
-        ErrorCode.TopicAuthorizationFailed,
-        ErrorCode.ClusterAuthorizationFailed,
-        ErrorCode.Local_Authentication,
-        ErrorCode.SaslAuthenticationFailed,
-        ErrorCode.MsgSizeTooLarge,
-        ErrorCode.InvalidMsgSize,
-    ];
-
     private readonly IProducer<byte[], byte[]> _producer;
     private readonly string _defaultTopic;
     private readonly ILogger<KafkaRejectionPublisher> _logger;
@@ -32,18 +22,7 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
     {
         _defaultTopic = options.RejectedTopic;
         _logger = logger;
-        var nativeLog = new KafkaNativeLogBridge(logger, throttle);
-        var config = new ProducerConfig
-        {
-            EnableIdempotence = true,
-            Acks = Acks.All,
-            MessageTimeoutMs = options.ProducerMessageTimeoutMs,
-        }.ApplyConnection(options);
-
-        _producer = new ProducerBuilder<byte[], byte[]>(config)
-            .SetErrorHandler((_, error) => fatalHandler.Handle(error))
-            .SetLogHandler((_, message) => nativeLog.Handle(message))
-            .Build();
+        _producer = KafkaProducerSupport.CreateProducer(options, fatalHandler, logger, throttle);
     }
 
     /// <summary>
@@ -54,35 +33,26 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
     /// </summary>
     public async ValueTask<RejectionPublishResult> PublishAsync(IReadOnlyList<RejectedMessage> rejected, CancellationToken cancellationToken)
     {
-        var tasks = rejected
-            .Select(r => _producer.ProduceAsync(r.Info.TargetTopic ?? _defaultTopic, ToMessage(r), cancellationToken))
-            .ToList();
+        List<Task<DeliveryResult<byte[], byte[]>>> tasks;
         try
         {
-            await Task.WhenAll(tasks);
-            return RejectionPublishResult.Success;
+            tasks = rejected
+                .Select(r => _producer.ProduceAsync(r.Info.TargetTopic ?? _defaultTopic, ToMessage(r), cancellationToken))
+                .ToList();
         }
-        catch (Exception) when (tasks.Any(t => t.IsFaulted))
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            var failed = tasks.Where(t => t.IsFaulted).ToList();
-            var error = failed.Select(t => (t.Exception!.GetBaseException() as KafkaException)?.Error)
-                .FirstOrDefault(e => e is not null);
-            var unconfirmed = tasks.Count(t => !t.IsCompletedSuccessfully);
-            var code = error?.Code ?? ErrorCode.Unknown;
-            var reason = error?.Reason ?? failed[0].Exception!.GetBaseException().Message;
-
-            if (NonTransient.Contains(code))
-            {
-                _logger.LogError("Rejected topic publish failed with non-transient error {Code}: {Reason}; unconfirmed {Unconfirmed} of {Total}", code, reason, unconfirmed, tasks.Count);
-            }
-            else
-            {
-                _logger.LogWarning("Rejected topic publish failed: {Code}: {Reason}; unconfirmed {Unconfirmed} of {Total}", code, reason, unconfirmed, tasks.Count);
-            }
-
-            return RejectionPublishResult.Failure($"{code}: {reason}; unconfirmed {unconfirmed} of {tasks.Count}");
+            // Синхронный отказ постановки в очередь: только тип исключения, без текста.
+            _logger.LogError("Rejected topic publish could not be queued: {ErrorType}", ex.GetType().Name);
+            return RejectionPublishResult.Failure(ex.GetType().Name);
         }
+
+        var error = await KafkaProducerSupport.AwaitAllAsync(tasks, _logger, "Rejected topic", includeExceptionText: true);
+        return error is null ? RejectionPublishResult.Success : RejectionPublishResult.Failure(error);
     }
+
+    /// <summary>Producer закрыт (для проверки порядка остановки в тестах).</summary>
+    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     public void Dispose()
     {
@@ -95,11 +65,8 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
         _producer.Dispose();
     }
 
-    internal const string RuleIdHeader = "ktm-reject-rule-id";
     // Лимиты длины заголовков - в UTF-16 code units (string.Length), не в байтах и не в графемах.
     internal const int RuleIdMaxLength = 128;
-    internal const string RuleNameHeader = "ktm-reject-rule-name";
-    internal const string RuleVersionHeader = "ktm-reject-rule-version";
     internal const int RuleNameMaxLength = 256;
     internal const int DetailMaxLength = 1024;
 
@@ -111,18 +78,19 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
             Value = message.Body.ToArray(),
             Headers = new Headers
             {
-                { "ktm-reject-reason", Utf8(r.Info.Reason) },
-                { "ktm-reject-detail", Utf8(r.Info.Kind == RejectionKind.Rule ? Truncate(r.Info.Detail, DetailMaxLength) : r.Info.Detail) },
-                { "ktm-source-topic", Utf8(message.Topic) },
-                { "ktm-source-partition", Utf8(message.Partition.ToString(CultureInfo.InvariantCulture)) },
-                { "ktm-source-offset", Utf8(message.Offset.ToString(CultureInfo.InvariantCulture)) },
+                { KafkaHeaders.RejectReason, Utf8(r.Info.Reason) },
+                { KafkaHeaders.RejectDetail, Utf8(r.Info.Kind == RejectionKind.Rule ? Truncate(r.Info.Detail, DetailMaxLength) : r.Info.Detail) },
+                { KafkaHeaders.SourceTopic, Utf8(message.Topic) },
+                { KafkaHeaders.SourcePartition, Utf8(message.Partition.ToString(CultureInfo.InvariantCulture)) },
+                { KafkaHeaders.SourceOffset, Utf8(message.Offset.ToString(CultureInfo.InvariantCulture)) },
+                { KafkaHeaders.SourceTimestamp, Utf8(KafkaProducerSupport.Rfc3339(message.Timestamp)) },
             },
         };
 
         var ruleId = NormalizeRuleId(r.Info.RuleId);
         if (ruleId is not null)
         {
-            result.Headers.Add(RuleIdHeader, Utf8(ruleId));
+            result.Headers.Add(KafkaHeaders.RejectRuleId, Utf8(ruleId));
         }
 
         // Название и версия правила - только у отбраковки правилом; форматные отбраковки их не получают.
@@ -131,12 +99,12 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
             var ruleName = Normalize(r.Info.RuleName, RuleNameMaxLength);
             if (ruleName is not null)
             {
-                result.Headers.Add(RuleNameHeader, Utf8(ruleName));
+                result.Headers.Add(KafkaHeaders.RejectRuleName, Utf8(ruleName));
             }
 
             if (r.Info.RuleVersion is { } version)
             {
-                result.Headers.Add(RuleVersionHeader, Utf8(version.ToString(CultureInfo.InvariantCulture)));
+                result.Headers.Add(KafkaHeaders.RejectRuleVersion, Utf8(version.ToString(CultureInfo.InvariantCulture)));
             }
         }
 
@@ -168,15 +136,7 @@ public sealed class KafkaRejectionPublisher : IRejectionPublisher, IDisposable
         return result.Length == 0 ? null : result;
     }
 
-    private static string Truncate(string value, int max)
-    {
-        if (value.Length <= max)
-        {
-            return value;
-        }
+    private static string Truncate(string value, int max) => KafkaProducerSupport.Truncate(value, max);
 
-        return value[..(char.IsHighSurrogate(value[max - 1]) ? max - 1 : max)];
-    }
-
-    private static byte[] Utf8(string value) => Encoding.UTF8.GetBytes(value);
+    private static byte[] Utf8(string value) => KafkaProducerSupport.Utf8(value);
 }

@@ -1,6 +1,7 @@
 using Ktm.DataSaver.Core.Batching;
 using Ktm.DataSaver.Core.Model;
 using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Core.Resilience;
 
 namespace Ktm.DataSaver.Core.Ingestion;
 
@@ -81,14 +82,62 @@ public interface IRejectionPublisher
     ValueTask<RejectionPublishResult> PublishAsync(IReadOnlyList<RejectedMessage> rejected, CancellationToken cancellationToken);
 }
 
+/// <summary>Сообщение, которое не удалось обработать (ADR-0006): исходное сообщение, происхождение (если разобрано) и причина.</summary>
+public sealed record DeadLetteredMessage(ConsumedMessage Message, EventOrigin? Origin, DeadLetterInfo Info);
+
+/// <summary>Итог публикации в dlq: отказ Kafka - результат, а не исключение.</summary>
+public sealed record DeadLetterPublishResult
+{
+    private DeadLetterPublishResult() { }
+
+    public static DeadLetterPublishResult Success { get; } = new();
+
+    public string? Error { get; private init; }
+
+    public bool IsSuccess => Error is null;
+
+    public static DeadLetterPublishResult Failure(string error)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(error);
+        return new DeadLetterPublishResult { Error = error };
+    }
+}
+
+/// <summary>
+/// Порт публикации в dlq (ADR-0006 п. 2.4, 2.5): возвращает <see cref="DeadLetterPublishResult.Success"/> только после
+/// подтверждения брокера (цикл коммитит offset сообщения сразу после этого, поэтому до подтверждения коммит недопустим).
+/// Реализация обязана иметь собственный таймаут ожидания подтверждений; отказ - <see cref="DeadLetterPublishResult.Failure"/>,
+/// исключение порта цикл трактует как отказ. Ни тела, ни текст исключения в лог и заголовки не попадают.
+/// </summary>
+public interface IDeadLetterPublisher
+{
+    ValueTask<DeadLetterPublishResult> PublishAsync(IReadOnlyList<DeadLetteredMessage> messages, CancellationToken cancellationToken);
+}
+
+/// <summary>Порт наблюдаемости цикла (метрики): реализует Infrastructure, Core метрик не знает.</summary>
+public interface IIngestionObserver
+{
+    /// <summary>Неудачная попытка стадии: <c>pipeline</c>, <c>write</c>, <c>publish</c>, <c>dlq_publish</c>.</summary>
+    void Retry(string stage);
+
+    /// <summary>Запущена изоляция ядовитого сообщения при записи.</summary>
+    void WriteIsolation();
+}
+
 /// <summary>Порт синхронного commit (4.3): offsets уже со смещением +1. Ошибка (потеря партиции) - исключение.</summary>
 public interface IOffsetCommitter
 {
     ValueTask CommitAsync(IReadOnlyList<PartitionOffset> offsets, CancellationToken cancellationToken);
 }
 
-/// <summary>Порт оповещения администратора о Fatal-config (заглушка до появления канала оповещений).</summary>
+/// <summary>Порт оповещения администратора о Fatal-config и об открытом предохранителе dlq (заглушка до появления канала оповещений).</summary>
 public interface IAdminNotifier
 {
     void NotifyFatalConfig(Exception error, int attempt);
+
+    /// <summary>
+    /// Предохранитель dlq открыт: сообщения повторяются без предела, администратору нужно вмешаться (ошибка данных или кода,
+    /// а не конфигурации). Вызывается на каждой неудачной попытке при открытом предохранителе.
+    /// </summary>
+    void NotifyDeadLetterBreakerOpen(Exception error, int attempt);
 }

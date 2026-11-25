@@ -38,7 +38,7 @@ public sealed class KafkaRejectionPublisherTests(KafkaFixture kafka)
         Assert.Equal("skud:7", Encoding.UTF8.GetString(message.Key));
         Assert.Equal("{broken", Encoding.UTF8.GetString(message.Value));
         string Header(string name) => Encoding.UTF8.GetString(message.Headers.GetLastBytes(name));
-        Assert.Equal(5, message.Headers.Count);
+        Assert.Equal(6, message.Headers.Count);
         Assert.Equal("malformed_json", Header("ktm-reject-reason"));
         Assert.Equal("unexpected token at 5", Header("ktm-reject-detail"));
         Assert.Equal("ktm.events.raw", Header("ktm-source-topic"));

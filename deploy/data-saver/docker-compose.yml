@@ -42,7 +42,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: ktm-data-saver:local
+    image: ktm-data-saver:local251126
     restart: unless-stopped
     # Настройки DataSaver__* - из .env; секрет БД - только файлом (DataSaver__Postgres__PasswordFile в .env).
     env_file: .env

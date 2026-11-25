@@ -137,6 +137,9 @@ internal sealed class FakeStore(List<string> log) : IEventStore
 
     public Action<int>? OnCall { get; set; }
 
+    /// <summary>Исключение по содержимому записываемой пачки (идентификаторы событий) либо null; вызывается после <see cref="Fail"/>.</summary>
+    public Func<string[], Exception?> FailOn { get; set; } = _ => null;
+
     /// <summary>Запись «зависает» до отмены токена (замена зависшего соединения с БД).</summary>
     public bool Hang { get; set; }
 
@@ -155,6 +158,11 @@ internal sealed class FakeStore(List<string> log) : IEventStore
         if (Fail(Writes.Count) is { } error)
         {
             throw error;
+        }
+
+        if (FailOn(Writes[^1]) is { } contentError)
+        {
+            throw contentError;
         }
     }
 }
@@ -182,6 +190,45 @@ internal sealed class FakePublisher(List<string> log) : IRejectionPublisher
 
         return ValueTask.FromResult(Result(Published.Count));
     }
+}
+
+internal sealed class FakeDeadLetterPublisher(List<string> log) : IDeadLetterPublisher
+{
+    /// <summary>Координаты <c>partition@offset</c> по вызовам.</summary>
+    public List<string[]> Published { get; } = [];
+
+    public List<DeadLetteredMessage> Messages { get; } = [];
+
+    public Func<int, DeadLetterPublishResult> Result { get; set; } = _ => DeadLetterPublishResult.Success;
+
+    public Func<int, Exception?> Throw { get; set; } = _ => null;
+
+    public Action<int>? OnCall { get; set; }
+
+    public ValueTask<DeadLetterPublishResult> PublishAsync(IReadOnlyList<DeadLetteredMessage> messages, CancellationToken cancellationToken)
+    {
+        log.Add("dlq");
+        Published.Add(messages.Select(m => $"{m.Message.Partition}@{m.Message.Offset}").ToArray());
+        Messages.AddRange(messages);
+        OnCall?.Invoke(Published.Count);
+        if (Throw(Published.Count) is { } error)
+        {
+            throw error;
+        }
+
+        return ValueTask.FromResult(Result(Published.Count));
+    }
+}
+
+internal sealed class RecordingObserver : IIngestionObserver
+{
+    public List<string> Retries { get; } = [];
+
+    public int Isolations { get; private set; }
+
+    public void Retry(string stage) => Retries.Add(stage);
+
+    public void WriteIsolation() => Isolations++;
 }
 
 internal sealed class FakeCommitter(List<string> log) : IOffsetCommitter
@@ -228,6 +275,9 @@ internal sealed class Harness
     public readonly FakeSource Source;
     public readonly FakeStore Store;
     public readonly FakePublisher Publisher;
+    public readonly FakeDeadLetterPublisher DeadLetters;
+    public readonly DlqBreaker Breaker;
+    public readonly RecordingObserver Observer = new();
     public readonly FakeCommitter Committer;
     public readonly FakeFailureHandler Handler = new();
     public readonly CountingAdminNotifier Notifier = new();
@@ -236,35 +286,53 @@ internal sealed class Harness
     public readonly Microsoft.Extensions.Logging.Testing.FakeLogger<IngestionLoop> Logger = new();
 
     public Harness(int batchSize = 3, params IIngestionStage[] stages)
-        : this(batchSize, TimeSpan.FromMilliseconds(100), TimeSpan.FromHours(1), stages)
+        : this(batchSize, TimeSpan.FromMilliseconds(100), TimeSpan.FromHours(1), stages, DlqPolicy.Default)
+    {
+    }
+
+    /// <summary>Цикл с заданным декодером формата (стадия разбора).</summary>
+    public Harness(EventDecoder decoder, int batchSize = 3)
+        : this(batchSize, TimeSpan.FromMilliseconds(100), TimeSpan.FromHours(1), [], DlqPolicy.Default, decoder)
+    {
+    }
+
+    /// <summary>Цикл с заданной политикой dlq.</summary>
+    public Harness(DlqPolicy policy, int batchSize = 3, params IIngestionStage[] stages)
+        : this(batchSize, TimeSpan.FromMilliseconds(100), TimeSpan.FromHours(1), stages, policy)
     {
     }
 
     /// <summary>Цикл с заданными интервалом опроса и предельным ожиданием закрытия пачки по времени.</summary>
     public Harness(TimeSpan pollInterval, TimeSpan batchMaxWait, int batchSize)
-        : this(batchSize, pollInterval, batchMaxWait, [])
+        : this(batchSize, pollInterval, batchMaxWait, [], DlqPolicy.Default)
     {
     }
 
-    private Harness(int batchSize, TimeSpan pollInterval, TimeSpan batchMaxWait, IIngestionStage[] stages)
+    private Harness(int batchSize, TimeSpan pollInterval, TimeSpan batchMaxWait, IIngestionStage[] stages, DlqPolicy policy, EventDecoder? decoder = null)
     {
+        DeadLetters = new FakeDeadLetterPublisher(Log);
+        Breaker = new DlqBreaker(policy.BreakerThreshold);
         Source = new FakeSource(Time, Log);
         Store = new FakeStore(Log);
         Publisher = new FakePublisher(Log);
         Committer = new FakeCommitter(Log);
         Loop = new IngestionLoop(
             Source,
-            new IngestionPipeline(new FormatStage(new EventDecoder()), stages),
+            new IngestionPipeline(new FormatStage(decoder ?? new EventDecoder()), stages),
             Store,
             Publisher,
+            DeadLetters,
             Committer,
             Handler,
             Notifier,
             new Batcher<ConsumedMessage>(batchSize, batchMaxWait, Time),
             new BackoffPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 2, 0, () => 0.5),
             new IngestionLoopOptions(pollInterval, TimeSpan.FromSeconds(30)),
+            policy,
+            Breaker,
             Time,
-            Logger);
+            Logger,
+            Observer);
     }
 
     public static TopicPartitionKey P(int partition) => new("ktm.events.raw", partition);
@@ -309,6 +377,8 @@ internal sealed class Harness
 
 internal sealed class RejectingStage : IIngestionStage
 {
+    public string Stage => PipelineStages.Validation;
+
     public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed) =>
         IngestionVerdict.Reject(new RejectionInfo(RejectionKind.Validation, "test_rule", "rejected by test"));
 }

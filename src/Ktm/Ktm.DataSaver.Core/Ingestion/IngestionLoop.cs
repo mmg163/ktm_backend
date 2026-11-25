@@ -20,9 +20,11 @@ public enum IngestionState
 public sealed record IngestionLoopOptions(TimeSpan PollInterval, TimeSpan ShutdownTimeout);
 
 /// <summary>
-/// Цикл приёма (ADR-0002, D-5...D-8): накопление пачки, запись, публикация отбракованных, commit offset+1 по всем
-/// сообщениям пачки. Commit только после успеха обоих шагов. Весь цикл в одном потоке; остановку только
-/// сигнализируют токеном, пачку дописывает сам цикл. Ошибки данных решает порт C6.
+/// Цикл приёма (ADR-0002, D-5...D-8): накопление пачки, запись, публикация в dlq и в rejected, commit offset+1 по всем
+/// сообщениям пачки. Commit только после успеха всех шагов. Весь цикл в одном потоке; остановку только
+/// сигнализируют токеном, пачку дописывает сам цикл. Ошибки данных решает порт C6, затем бюджет попыток (ADR-0006):
+/// после <see cref="DlqPolicy.MaxAttempts"/> неудач ядовитое сообщение изолируется и уходит в dlq с подтверждением до commit;
+/// без предела повторяется только инфраструктура.
 /// Экземпляр одноразовый: <see cref="RunAsync"/> можно вызвать один раз.
 /// </summary>
 public sealed class IngestionLoop(
@@ -30,16 +32,21 @@ public sealed class IngestionLoop(
     IngestionPipeline pipeline,
     IEventStore store,
     IRejectionPublisher rejectionPublisher,
+    IDeadLetterPublisher deadLetterPublisher,
     IOffsetCommitter committer,
     IWriteFailureHandler failureHandler,
     IAdminNotifier adminNotifier,
     Batcher<ConsumedMessage> batcher,
     BackoffPolicy backoff,
     IngestionLoopOptions options,
+    DlqPolicy policy,
+    DlqBreaker breaker,
     TimeProvider timeProvider,
-    ILogger<IngestionLoop> logger)
+    ILogger<IngestionLoop> logger,
+    IIngestionObserver? observer = null)
 {
     private readonly OffsetTracker _tracker = new();
+    private readonly PoisonIsolator _isolator = new(store);
 
     private sealed record WriteItem(ConsumedMessage Message, ParsedEvent Event);
 
@@ -61,9 +68,9 @@ public sealed class IngestionLoop(
 
     /// <summary>
     /// Момент последней отметки цикла (D-10, liveness): начало итерации, окончание ожидания Consume (с IdleGuard) до
-    /// записи, успешная запись и успешная публикация в rejected, каждая итерация ожидания backoff (в том числе в
-    /// <c>Degraded</c>). Commit и failureHandler - исключения: отметки вокруг них нет. Три блокирующих ожидания (Consume,
-    /// запись, публикация) не суммируются: между ними есть отметка. Читается из потока health-проверки.
+    /// записи, успешная запись (в том числе каждая запись изоляции) и успешная публикация в dlq и rejected, каждая итерация
+    /// ожидания backoff (в том числе в <c>Degraded</c>). Commit и failureHandler - исключения: отметки вокруг них нет.
+    /// Блокирующие ожидания (Consume, запись, публикация) не суммируются: между ними есть отметка. Читается из потока health-проверки.
     /// </summary>
     public DateTimeOffset LastHeartbeat => new(Interlocked.Read(ref _heartbeatTicks), TimeSpan.Zero);
 
@@ -179,10 +186,11 @@ public sealed class IngestionLoop(
         try
         {
             var deadLettered = new HashSet<ConsumedMessage>(ReferenceEqualityComparer.Instance);
-            // received_at один на пачку: повторы записи и продолжение после DeadLetter используют то же значение (ADR-0002, D-3).
+            // received_at один на пачку: повторы записи, изоляция и продолжение после DeadLetter используют то же значение (ADR-0002, D-3).
             var receivedAt = timeProvider.GetUtcNow();
             if (!await ClassifyStageAsync(raw, results)
                 || !await WriteStageAsync(results, deadLettered, receivedAt)
+                || !await DeadLetterStageAsync(results)
                 || !await PublishStageAsync(results))
             {
                 logger.LogWarning("Shutdown deadline reached before batch of {Size} was finished; offsets are not committed", batch.Count);
@@ -231,50 +239,169 @@ public sealed class IngestionLoop(
     }
 
     /// <summary>
-    /// Классификация пачки конвейером. Исключение стадии (недоступность C5 и т.п.) - сбой пачки, а не отбраковка:
-    /// Error-лог, Degraded, повтор с backoff.
+    /// Классификация пачки конвейером, поштучно. Неожиданное исключение стадии - сбой обработки сообщения, а не отбраковка:
+    /// повтор этого сообщения с backoff до <see cref="DlqPolicy.MaxAttempts"/> попыток, затем сообщение признаётся ядовитым
+    /// (результат с причиной dlq). Исключение инфраструктуры повторяется без предела. Штатные результаты бюджета не расходуют.
     /// </summary>
     private async Task<bool> ClassifyStageAsync(List<ConsumedMessage> raw, List<PipelineResult> results)
     {
-        while (true)
+        DrainAssignmentChanges();
+        results.Clear();
+        // Принадлежность текущей пачке: после revoke во время backoff сообщения отозванных партиций обрабатывать нельзя
+        // (иначе их offset попал бы в commit). Множество пересобирается только после backoff (редкий путь).
+        var live = new HashSet<ConsumedMessage>(raw, ReferenceEqualityComparer.Instance);
+        foreach (var message in raw.ToArray())
         {
-            DrainAssignmentChanges();
-            results.Clear();
-            try
+            if (!live.Contains(message))
             {
-                foreach (var message in raw)
+                continue;
+            }
+
+            var attempts = 0;
+            while (true)
+            {
+                try
                 {
                     results.Add(pipeline.Process(message));
+                    break;
                 }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                var attempt = Interlocked.Increment(ref _retryCount);
-                // Исключение целиком не логируем: его текст может нести фрагмент тела сообщения (ПДн).
-                logger.LogError("Pipeline stage failed for batch of {Size}: {ErrorType}, attempt {Attempt}; batch is retried, not rejected", raw.Count, ex.GetType().Name, attempt);
-                EnterDegraded();
-                if (!await BackoffWaitAsync())
+                catch (Exception ex)
                 {
-                    return false;
+                    var errorClass = WriteErrorClassifier.Classify(ex);
+                    // Исключение целиком не логируем: его текст может нести фрагмент тела сообщения (ПДн).
+                    var errorType = DeadLetterInfo.ShortTypeName(ex);
+                    var stage = ex is PipelineStageException stageError ? stageError.Stage : PipelineStages.Parse;
+                    var blockedByBreaker = false;
+                    if (policy.Enabled && errorClass == WriteErrorClass.Unexpected)
+                    {
+                        attempts++;
+                        if (attempts >= policy.MaxAttempts && !breaker.IsOpen)
+                        {
+                            var info = DeadLetterInfo.FromException(ex, PipelineStages.Parse, attempts, timeProvider.GetUtcNow());
+                            RegisterPoisonCandidate();
+                            results.Add(PipelineResult.Poison(message, info, (ex as PipelineStageException)?.Origin));
+                            logger.LogError(
+                                "Message {Topic} {Partition} {Offset} failed {Attempts} times at stage {Stage}: {ErrorType}; it is set aside for the dead letter topic",
+                                message.Topic, message.Partition, message.Offset, attempts, info.Stage, errorType);
+                            break;
+                        }
+
+                        // Оповещение на каждой попытке при открытом предохранителе, независимо от расхода бюджета сообщения.
+                        blockedByBreaker = breaker.IsOpen;
+                    }
+
+                    var attempt = Interlocked.Increment(ref _retryCount);
+                    logger.LogError(
+                        "Pipeline stage failed for message {Topic} {Partition} {Offset}: {ErrorType} at stage {Stage}, attempt {Attempt}; message is retried, not rejected",
+                        message.Topic, message.Partition, message.Offset, errorType, stage, attempt);
+                    if (blockedByBreaker)
+                    {
+                        adminNotifier.NotifyDeadLetterBreakerOpen(ex, attempt);
+                    }
+
+                    observer?.Retry("pipeline");
+                    EnterDegraded();
+                    if (!await BackoffWaitAsync())
+                    {
+                        return false;
+                    }
+
+                    DrainAssignmentChanges();
+                    live = new HashSet<ConsumedMessage>(raw, ReferenceEqualityComparer.Instance);
+                    if (!live.Contains(message))
+                    {
+                        // Партиция отозвана во время паузы: сообщение выброшено, результат для него не нужен.
+                        break;
+                    }
                 }
             }
         }
+
+        return true;
     }
 
     private async Task<bool> WriteStageAsync(List<PipelineResult> results, HashSet<ConsumedMessage> deadLettered, DateTimeOffset receivedAt)
     {
+        // Записанные изоляцией сообщения повторно не пишутся (иначе раздувается duplicates и растёт нагрузка).
+        var written = new HashSet<ConsumedMessage>(ReferenceEqualityComparer.Instance);
+        var dataFailures = 0;
+        // Неудавшиеся записи изоляции по событиям (для ktm-dlq-attempts); живёт всё время стадии, как written.
+        var failedWrites = new Dictionary<ParsedEvent, int>(ReferenceEqualityComparer.Instance);
+        var isolating = false;
+        var isolationStarted = false;
         while (true)
         {
             DrainAssignmentChanges();
             var items = results
-                .Where(r => r.Event is not null && !deadLettered.Contains(r.Message))
+                .Where(r => r.Event is not null && !deadLettered.Contains(r.Message) && !written.Contains(r.Message))
                 .Select(r => new WriteItem(r.Message, r.Event!))
                 .ToList();
             if (items.Count == 0)
             {
                 return true;
+            }
+
+            if (isolating)
+            {
+                if (!isolationStarted)
+                {
+                    isolationStarted = true;
+                    observer?.WriteIsolation();
+                    logger.LogError(
+                        "Write failed {Attempts} times with a message-bound error; isolating the poison message among {Count} messages",
+                        dataFailures, items.Count);
+                }
+
+                var isolation = await _isolator.IsolateAsync(
+                    items,
+                    i => i.Event,
+                    receivedAt,
+                    part =>
+                    {
+                        foreach (var item in part)
+                        {
+                            written.Add(item.Message);
+                        }
+
+                        OnEventsWritten(part.Count);
+                    },
+                    Touch,
+                    IoToken,
+                    // Ядовитое регистрируется в момент обнаружения: успешные записи изоляции между ядовитыми закрывают предохранитель.
+                    poison => RegisterPoison(results, poison, dataFailures + failedWrites.GetValueOrDefault(poison.Item.Event)),
+                    failedWrites);
+
+                if (isolation.Outcome == IsolationOutcome.Cancelled)
+                {
+                    return false;
+                }
+
+                if (isolation.Outcome == IsolationOutcome.Interrupted)
+                {
+                    // Инфраструктура: обычный путь без нового расхода бюджета, изоляция продолжится по остатку.
+                    var interrupted = isolation.InterruptedBy!;
+                    var attempt = Interlocked.Increment(ref _retryCount);
+                    var interruptedClass = WriteErrorClassifier.Classify(interrupted);
+                    LogWriteFailure(interrupted, interruptedClass, attempt, isolation.Remaining);
+                    if (interruptedClass == WriteErrorClass.FatalConfig)
+                    {
+                        adminNotifier.NotifyFatalConfig(interrupted, attempt);
+                    }
+
+                    EnterDegraded();
+                    if (!await BackoffWaitAsync())
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                // Изоляция завершена. Не отправленные в dlq из-за открытого предохранителя остаются в items:
+                // следующий проход пишет их обычным путём и повторяет без предела.
+                isolating = false;
+                isolationStarted = false;
+                continue;
             }
 
             try
@@ -285,6 +412,7 @@ public sealed class IngestionLoop(
                 // запись = BeginTransaction + ExecuteNonQuery + Commit, CommandTimeout на каждое обращение).
                 // Touch после записи нужен, чтобы ожидания записи и публикации не суммировались в одно окно без отметки.
                 Touch();
+                OnEventsWritten(items.Count);
                 return true;
             }
             catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
@@ -315,17 +443,37 @@ public sealed class IngestionLoop(
                         decision = WriteFailureDecision.Retry;
                     }
 
+                    // Решение порта C6 имеет приоритет над бюджетом и его не расходует.
                     if (decision.Kind == WriteFailureKind.DeadLetter && TryAcceptDeadLetter(context, decision, deadLettered))
                     {
                         logger.LogError("Write data error: {Count} messages handed over to the failure handler", decision.DeadLetterItems.Count);
                         continue;
                     }
 
-                    logger.LogError("Write failure handler made no progress, attempt {Attempt}; partition stays blocked", attempt);
+                    if (!(policy.Enabled && breaker.IsOpen))
+                    {
+                        // При открытом предохранителе блокировку уже несут общая запись сбоя и оповещение.
+                        logger.LogWarning("Write failure handler made no progress, attempt {Attempt}; partition stays blocked", attempt);
+                    }
                 }
                 else if (errorClass == WriteErrorClass.FatalConfig)
                 {
                     adminNotifier.NotifyFatalConfig(ex, attempt);
+                }
+
+                if (errorClass is WriteErrorClass.Data or WriteErrorClass.Unexpected && policy.Enabled)
+                {
+                    dataFailures++;
+                    if (breaker.IsOpen)
+                    {
+                        // Системная проблема, замаскированная под данные: dlq не используется, повтор без предела.
+                        adminNotifier.NotifyDeadLetterBreakerOpen(ex, attempt);
+                    }
+                    else if (dataFailures >= policy.MaxAttempts)
+                    {
+                        isolating = true;
+                        continue;
+                    }
                 }
 
                 EnterDegraded();
@@ -333,6 +481,103 @@ public sealed class IngestionLoop(
                 {
                     return false;
                 }
+            }
+        }
+    }
+
+    /// <summary>Успешная запись событий: закрывает предохранитель (запись пустой пачки его не закрывает).</summary>
+    private void OnEventsWritten(int count)
+    {
+        var wasOpen = breaker.IsOpen;
+        breaker.OnWriteSucceeded(count);
+        if (wasOpen && !breaker.IsOpen)
+        {
+            logger.LogWarning("Dead letter breaker is closed: a write succeeded");
+        }
+    }
+
+    /// <summary>
+    /// Единая точка учёта ядовитого сообщения предохранителем; переход «закрыт -> открыт» логируется один раз.
+    /// </summary>
+    private void RegisterPoisonCandidate()
+    {
+        var wasOpen = breaker.IsOpen;
+        breaker.Register(1);
+        if (!wasOpen && breaker.IsOpen)
+        {
+            logger.LogError(
+                "Dead letter breaker is open: {Count} messages in a row went to the dead letter topic without a successful write (threshold {Threshold}); further poison messages are retried without limit",
+                breaker.Count, policy.BreakerThreshold);
+        }
+    }
+
+    /// <summary>
+    /// Ядовитое сообщение изоляции заменяет результат (оно больше не пишется и уходит в dlq). Открытый предохранитель
+    /// оставляет сообщение в пачке: повтор без предела. Вызывается изолятором в момент обнаружения, в порядке пачки.
+    /// </summary>
+    private void RegisterPoison(List<PipelineResult> results, IsolatedPoison<WriteItem> poison, int attempts)
+    {
+        if (breaker.IsOpen)
+        {
+            return;
+        }
+
+        RegisterPoisonCandidate();
+        var info = DeadLetterInfo.FromException(poison.Error, PipelineStages.Write, attempts, timeProvider.GetUtcNow());
+        var message = poison.Item.Message;
+        var index = results.FindIndex(r => ReferenceEquals(r.Message, message));
+        if (index >= 0)
+        {
+            results[index] = PipelineResult.Poison(message, info, new EventOrigin(poison.Item.Event.Source, poison.Item.Event.SourceEventId));
+        }
+    }
+
+    /// <summary>
+    /// Публикация ядовитых сообщений (любой стадии) в dlq одним шагом пачки: подтверждение брокера до commit offset.
+    /// Отказ - Degraded, пауза и повтор без предела, commit не выполняется; результат изоляции не пересчитывается.
+    /// </summary>
+    private async Task<bool> DeadLetterStageAsync(List<PipelineResult> results)
+    {
+        while (true)
+        {
+            DrainAssignmentChanges();
+            var poison = results
+                .Where(r => r.DeadLetter is not null)
+                .Select(r => new DeadLetteredMessage(r.Message, r.Origin, r.DeadLetter!))
+                .ToList();
+            if (poison.Count == 0)
+            {
+                return true;
+            }
+
+            DeadLetterPublishResult outcome;
+            try
+            {
+                outcome = await deadLetterPublisher.PublishAsync(poison, IoToken);
+            }
+            catch (OperationCanceledException) when (IoToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // Исключение порта - отказ публикации. Текст исключения не логируем: возможен фрагмент тела.
+                logger.LogError("Dead letter publisher threw {ErrorType} for {Count} messages", ex.GetType().Name, poison.Count);
+                outcome = DeadLetterPublishResult.Failure(ex.GetType().Name);
+            }
+
+            if (outcome.IsSuccess)
+            {
+                Touch();
+                return true;
+            }
+
+            var attempt = Interlocked.Increment(ref _retryCount);
+            logger.LogWarning("Publishing {Count} messages to the dead letter topic failed, attempt {Attempt}: {Error}", poison.Count, attempt, outcome.Error);
+            EnterDegraded();
+            if (!await BackoffWaitAsync())
+            {
+                return false;
             }
         }
     }
@@ -348,7 +593,7 @@ public sealed class IngestionLoop(
         var level = errorClass == WriteErrorClass.Transient ? LogLevel.Warning : LogLevel.Error;
         // Исключение целиком не логируется ни для какого класса: Message драйвера может содержать значения из строки.
         var sqlState = WriteErrorClassifier.FindSqlState(ex);
-        var location = FindLocation(ex);
+        var location = WriteErrorClassifier.FindLocation(ex);
         string? chain = null;
         string? code = null;
         if (string.IsNullOrEmpty(sqlState) && IsNetworkType(ex))
@@ -379,8 +624,6 @@ public sealed class IngestionLoop(
             yield return current;
         }
     }
-
-    private static IDbErrorLocation? FindLocation(Exception ex) => EnumerateChain(ex).OfType<IDbErrorLocation>().FirstOrDefault();
 
     /// <summary>Типы, текст которых (хост, код) нужен для диагностики; остальные логируются только по типу. DbException покрывает NpgsqlException.</summary>
     private static bool IsNetworkType(Exception ex) =>
@@ -443,7 +686,7 @@ public sealed class IngestionLoop(
             catch (Exception ex)
             {
                 // Исключение порта - сбой публикации, а не отбраковка сообщения: commit не выполняется, пачка повторяется.
-                logger.LogError(ex, "Rejection publisher threw for {Count} messages", rejected.Count);
+                logger.LogError("Rejection publisher threw {ErrorType} for {Count} messages", ex.GetType().Name, rejected.Count);
                 outcome = RejectionPublishResult.Failure(ex.GetType().Name);
             }
 

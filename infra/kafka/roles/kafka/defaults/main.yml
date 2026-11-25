@@ -19,7 +19,9 @@ kafka_ufw_sources:
 _day: 86400000
 # Ключ сообщения: "<источник>:<ID события в источнике>" (задаётся продюсером — адаптером)
 kafka_topics:
-  - { name: ktm.events.raw,       partitions: 9, retention_ms: "{{ 7 * _day }}" }   # единый топик всех источников (ADR-0002 D-1)
+  - { name: ktm.events.raw.skud,  partitions: 3, retention_ms: "{{ 7 * _day }}" }
+  - { name: ktm.events.raw.cv,    partitions: 3, retention_ms: "{{ 7 * _day }}" }
+  - { name: ktm.events.raw.1c-do, partitions: 3, retention_ms: "{{ 7 * _day }}" }
   - { name: ktm.events.rejected,  partitions: 3, retention_ms: "{{ 30 * _day }}" }
   - { name: ktm.events.dlq,       partitions: 3, retention_ms: "{{ 30 * _day }}" }
 kafka_replication_factor: 1        # один брокер

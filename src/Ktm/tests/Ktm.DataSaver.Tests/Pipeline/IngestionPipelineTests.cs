@@ -13,6 +13,8 @@ public class IngestionPipelineTests
 
     private sealed class RecordingStage(string name, List<string> calls, IngestionVerdict? verdict = null) : IIngestionStage
     {
+        public string Stage => PipelineStages.Validation;
+
         public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed)
         {
             calls.Add(name);
@@ -22,6 +24,8 @@ public class IngestionPipelineTests
 
     private sealed class ThrowingStage : IIngestionStage
     {
+        public string Stage => PipelineStages.Rules;
+
         public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed) =>
             throw new InvalidOperationException("stage defect");
     }
@@ -153,16 +157,28 @@ public class IngestionPipelineTests
         Assert.Equal(["after"], calls);
     }
 
-    [Fact]
-    public void Process_PortOrStageException_IsNotARejection()
+    private sealed class ThrowingSchemaValidator : ISchemaValidator
     {
-        var validatorFailure = Assert.Throws<TimeoutException>(
-            () => Pipeline(new EventValidationStage(new ThrowingValidator())).Process(ValidMessage));
-        var stageFailure = Assert.Throws<InvalidOperationException>(
-            () => Pipeline(new ThrowingStage()).Process(ValidMessage));
+        public SchemaValidationResult Validate(System.Text.Json.JsonElement instance) => throw new InvalidOperationException("schema defect");
+    }
 
-        Assert.Equal("C5 backend is down", validatorFailure.Message);
-        Assert.Equal("stage defect", stageFailure.Message);
+    [Fact]
+    public void Process_ExceptionOfAnyStage_IsWrappedWithItsStageAndOrigin_AndIsNotARejection()
+    {
+        var validator = Assert.Throws<PipelineStageException>(
+            () => Pipeline(new EventValidationStage(new ThrowingValidator())).Process(ValidMessage));
+        var rules = Assert.Throws<PipelineStageException>(() => Pipeline(new ThrowingStage()).Process(ValidMessage));
+        var parse = Assert.Throws<PipelineStageException>(() =>
+            new IngestionPipeline(new FormatStage(new EventDecoder(new Dictionary<int, ISchemaValidator> { [1] = new ThrowingSchemaValidator() })), [])
+                .Process(ValidMessage));
+
+        Assert.Equal((PipelineStages.Validation, typeof(TimeoutException)), (validator.Stage, validator.InnerException!.GetType()));
+        Assert.Equal((PipelineStages.Rules, typeof(InvalidOperationException)), (rules.Stage, rules.InnerException!.GetType()));
+        Assert.Equal(PipelineStages.Parse, parse.Stage);
+        Assert.Equal(new EventOrigin("skud", "48213377"), validator.Origin);
+        Assert.Null(parse.Origin);
+        // Текст исходного исключения в обёртку не копируется.
+        Assert.DoesNotContain("C5 backend is down", validator.Message);
     }
 
     [Fact]

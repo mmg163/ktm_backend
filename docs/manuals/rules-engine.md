@@ -50,7 +50,7 @@
 ## 2. Место в обработке сообщения
 
 ```
-сообщение из ktm.events.raw
+сообщение из ktm.events.raw.<source>
    -> проверка формата (JSON, schemaVersion, схема v1)   не прошло -> rejected, причина malformed_json / unknown_schema_version / invalid_schema
    -> проверка C5 (содержательная)                       не прошло -> rejected (сейчас C5 принимает всё)
    -> правила отбраковки                                 сработало  -> rejected, причина = reason_code правила
@@ -459,8 +459,8 @@ ktm-reject-rule-id:       skud-test-event
 ktm-reject-rule-name:     СКУД: тестовое событие
 ktm-reject-rule-version:  1
 ktm-reject-detail:        Сработало правило «СКУД: тестовое событие» (skud-test-event, v1): eventType ==
-ktm-source-topic:         ktm.events.raw
-ktm-source-partition:     3
+ktm-source-topic:         ktm.events.raw.skud
+ktm-source-partition:     2
 ktm-source-offset:        10452
 ```
 
@@ -497,7 +497,7 @@ ktm-reject-detail:        Вычисление правила «СКУД: тес
 
 ```
 Warning  Message rejected by rule: {RuleId} {RuleVersion} {ReasonCode} {Source} {SourceEventId} {Topic} {Partition} {Offset}
-         (пример значений: skud-test-event 1 test_event skud 48213377 ktm.events.raw 3 10452; пишется после подтверждения публикации)
+         (пример значений: skud-test-event 1 test_event skud 48213377 ktm.events.raw.skud 2 10452; пишется после подтверждения публикации)
 Info     Rejection rule set applied: revision {Revision}, {RuleCount} active rules, {InvalidCount} invalid; added [{Added}], changed [{Changed}], removed [{Removed}]
          (пример: revision a1b2c3d4e5f6, 5 active rules, 1 invalid; added [], changed [cv-zero-confidence@2], removed [])
 Info     Rejection rule set applied: revision {Revision}, no enabled rules, {InvalidCount} invalid; added [{Added}], changed [{Changed}], removed [{Removed}]

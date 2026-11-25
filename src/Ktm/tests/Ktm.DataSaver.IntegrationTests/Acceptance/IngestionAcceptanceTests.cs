@@ -220,6 +220,8 @@ public sealed class IngestionAcceptanceTests(KafkaFixture kafka, PostgresFixture
 
     private sealed class EveryThirdMessageRule(string ruleId, string targetTopic) : IIngestionStage
     {
+        public string Stage => PipelineStages.Rules;
+
         public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed) =>
             message.Offset % 3 == 2
                 ? IngestionVerdict.Reject(new RejectionInfo(RejectionKind.Rule, "rule_matched", "every third", ruleId, targetTopic))

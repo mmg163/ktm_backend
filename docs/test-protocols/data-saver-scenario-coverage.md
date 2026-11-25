@@ -1,8 +1,33 @@
-# Data Saver: сверка сценариев спеков с тестами (задача 11.1)
+# Data Saver: карта покрытия сценариев
+
+Документ объединяет историческую карту `add-data-saver-core` и дополнение `add-data-saver-dlq-reprocessing`. Наличие теста и его успешный прогон рассматриваются отдельно.
+
+## Дополнение: DLQ и повторная обработка (2026-11-25)
+
+Таблица ниже отражает наличие проверок по исходному коду, а не результат интеграционной приёмки. U — `src/Ktm/tests/Ktm.DataSaver.Tests`. Сценарии admin API/UI исключены из тестирования решением пользователя; требования к их поведению сохраняются и проверяются ревью. Сценарии 6.1–6.2 прошли на реальных Kafka/Postgres и приняты reviewer; остальные сквозные сценарии и замеры производительности остаются открытыми.
+
+Источники: `openspec/changes/add-data-saver-dlq-reprocessing/specs/data-saver/{dead-letter,reprocessing,event-ingestion,ingestion-pipeline}/spec.md`; критерии — задачи 6.1–6.12 текущего `tasks.md`. Десять строк группируют сценарии и не являются полным перечнем требований спецификаций.
+
+| ID | Возможность / сценарий | Существующие проверки | Статус |
+| --- | --- | --- | --- |
+| DLQ-01  Временная ошибка записи, затем успех | U: `Ingestion/IngestionLoopDlqTests.DataErrorOnce_ThenSuccess_WritesAfterRetry_NothingGoesToDlq` | Покрыт: `Acceptance/DlqAcceptanceTests.TemporaryDbError_EventWrittenAfterRetry_NotInDlq`, реальный прогон 6.1 |
+| DLQ-02  Ядовитое сообщение, соседи и offset | U: `Ingestion/IngestionLoopDlqTests.PoisonInWrite_AfterBudget_IsIsolatedAndPublishedToDlq_NeighboursWrittenOnce_OffsetCoversAll` | Покрыт: `Acceptance/DlqAcceptanceTests.PoisonMessage_GoesToDlq_NeighboursWritten_PartitionContinues`, реальный прогон 6.2 |
+| DLQ-03  Ошибка стадии после бюджета | U: `Ingestion/IngestionLoopDlqTests.UnexpectedExceptionInStage_AfterMaxAttempts_GoesToDlqWithStageAndType_NotToRejected` | Частично: сквозная обработка — 6.11 |
+| DLQ-04  Инфраструктурный сбой не попадает в DLQ | U: `Ingestion/IngestionLoopDlqTests.InfrastructureErrors_AreRetriedWithoutLimit_NoIsolationNoDlq` | Частично: реальный контур — 6.8 |
+| DLQ-05  Недоступная DLQ не позволяет фиксировать offset | U: `Ingestion/IngestionLoopDlqTests.DlqPublishFailure_BlocksCommit_RetriesOnlyThePublish_AndDoesNotRewriteTheNeighbours` | Частично: Kafka — 6.6 |
+| DLQ-06  Предохранитель открывается и закрывается | U: `Resilience/DlqBreakerTests.Opens_exactlyAtThreshold_AndClosesOnlyBySuccessfulWriteOfEvents` | Частично: реальный контур — 6.8 |
+| DLQ-07  Повторная обработка: дубликаты, отбраковка, фильтр | U: `Reprocessing/ReprocessRunnerTests.CountersReportDuplicatesAndRejectedAgain_AndSecondRunWritesNothing`, `ReasonFilter_ProcessesOnlyMatchingMessages_AndCountsTheRestAsSkipped` | Частично: Kafka/Postgres — 6.3–6.4 |
+| DLQ-08  Повторная обработка: ошибки, отказ БД, ограничение скорости | U: `Reprocessing/ReprocessRunnerTests.PoisonOnWrite_IsReportedNotPublished_NeighboursWritten_NoTextOfException`, `DatabaseUnavailableLongerThanLimit_FailsWithProgress_ShorterOutageIsWaitedOut`, `MaxRate100_On1000Messages_TakesAtLeastNineSeconds` | Частично: реальные зависимости и нагрузка — 6.7, 6.11 |
+| DLQ-09  Один запуск, отмена, история, защита данных в отчёте | U: `Reprocessing/ReprocessJobManagerTests.ConcurrentStarts_CreateExactlyOneJob_OthersGetConflictWithActiveId`, `Cancel_ActiveJobEndsCancelled_FinishedAndUnknownAreReported`, `History_KeepsTenNewestJobs`, `SnapshotReportAndLogs_NeverContainMessageData` | Частично: сквозная ПДн-граница — 6.10 |
+| DLQ-10  Окно raw и retention | U: `Reprocessing/ReprocessRequestValidatorTests.TryParseUtc_AcceptsOnlyRfc3339WithZ`; Kafka-интеграция предусмотрена в `Kafka/KafkaReplaySourceTests.cs` | Частично: реальные границы и retention — 6.5 |
+
+Отдельные сценарии исправления и исходного события в разных частях (6.9), сетевая изоляция стенда (6.12) и целевая производительность (6.7) остаются открытыми до фактического прогона.
+
+## Историческая карта add-data-saver-core
 
 Изменение OpenSpec `add-data-saver-core`, ветка `feature/data-saver-core`. Источник сценариев:
-`openspec/changes/add-data-saver-core/specs/data-saver/event-ingestion/spec.md` (27 сценариев) и
-`.../ingestion-pipeline/spec.md` (11 сценариев). Всего 38.
+`openspec/changes/archive/2026-11-22-add-data-saver-core/specs/data-saver/event-ingestion/spec.md` (27 сценариев) и
+`openspec/changes/archive/2026-11-22-add-data-saver-core/specs/data-saver/ingestion-pipeline/spec.md` (11 сценариев). Всего 38. Задачи 11.x и итоги ниже относятся только к архивному изменению.
 
 Обозначения тестовых проектов: **U** - `src/Ktm/tests/Ktm.DataSaver.Tests` (юнит), **I** - `src/Ktm/tests/Ktm.DataSaver.IntegrationTests`
 (Kafka и Postgres в контейнерах). Категории: без метки - обычный прогон, `Long` - 2 минуты простоя БД, `Perf` - нагрузка (запускается вручную).
@@ -12,7 +37,7 @@
 
 Прогон тестов в этой задаче не выполнялся (это 11.2); таблица составлена чтением кода тестов и продуктового кода.
 
-## event-ingestion
+### event-ingestion
 
 | # | Requirement / Scenario | Тест (проект: файл, класс.метод) | Статус |
 |---|---|---|---|
@@ -44,7 +69,7 @@
 | 26 | Наблюдаемость / Сбой записи пачки | U: `IngestionLoopTests.WriteFailure_LogsRecordPerPartitionGroupOfAcceptedEvents_AndHeartbeatAdvances`, `DataWriteFailure_NeverLogsExceptionText_OnlyErrorTypeAndSqlState` | Покрыт |
 | 27 | Наблюдаемость / Измерение пропускной способности | I (`Perf`): Acceptance/ThroughputPerfTests.cs, `Sustained_load_at_target_rate_has_no_lag_growth_and_reports_latency`, `Backlog_drain_gives_maximum_single_instance_rate_and_insert_plan_on_filled_table`; протокол `docs/test-protocols/data-saver-throughput.md` (соб/с на устойчивом интервале, задержка p50/p99) | Покрыт |
 
-## ingestion-pipeline
+### ingestion-pipeline
 
 | # | Requirement / Scenario | Тест (проект: файл, класс.метод) | Статус |
 |---|---|---|---|
@@ -60,12 +85,12 @@
 | 37 | Точка расширения / Отбраковка без правила не несёт идентификатор | U: `KafkaRejectionMessageTests.Missing_or_blank_RuleId_gives_no_header`; I: `KafkaRejectionPublisherTests.Published_message_keeps_key_body_and_carries_all_reject_headers`, `IngestionAcceptanceTests.RejectedMessages_GoToRejectedTopicWithHeaders_...` (для всех отбракованных форматом, включая `malformed_json`, проверяет `DoesNotContain("ktm-reject-rule-id", record.Headers.Keys)`) | Покрыт |
 | 38 | Точка расширения / Стадия не знает о цикле | Поведенческого теста на такое утверждение нет (это свойство структуры кода). Косвенное подтверждение: стадия `EveryThirdMessageRule` регистрируется через DI (`services: s => s.AddSingleton<IIngestionStage>(...)`) в `ExtensionStage_RejectsEveryThirdToItsTopicWithRuleId_...` и работает без правок цикла | Закрыт иначе (структурно: тест 36 + ревью 11.4); автотеста нет |
 
-## Итог
+### Итог
 
 - Сценариев: 38. **Покрыт**: 34. **Частично**: 2 (№ 2, 14). **Закрыт иначе, без автотеста**: 2 (№ 18, 38). **ПРОБЕЛ**: 0.
 - Условие 11.1 («непокрытых сценариев нет») не выполнено, пока не решена судьба сценариев «частично» и «закрыт иначе»; чекбокс 11.1 не отмечен.
 
-### Список пробелов для разбора
+#### Список пробелов для разбора
 
 1. ~~**№ 34 ПРОБЕЛ (C6, временная ошибка).** Добавить в `IngestionLoopTests` проверку, что при временной ошибке записи (`IOException`) `FakeFailureHandler` не вызывался (счётчик вызовов в `Ingestion/IngestionHarness.cs`), а при ошибке данных вызывался.~~ Закрыт.
 2. ~~**№ 35 частично.** Тест цикла с реальным `BlockingWriteFailureHandler` на ошибке данных (`FakeDbException("23505")`): запись повторяется, состояние `Degraded`, offset не зафиксирован, пачка не потеряна.~~ Закрыт.
@@ -74,7 +99,7 @@
 5. **№ 2 частично.** Обычный (не `Perf`) тест «три источника -> три строки в журнале» либо принять покрытие `Perf`-прогоном.
 6. **№ 18 и № 38.** Решения без автотеста (ручная проверка репозитория на секреты; свойство структуры). Принять как «закрыто иначе» в приёмке или оформить пунктами чек-листа ревью 11.4.
 
-## Коды выхода
+### Коды выхода
 
 Ручной прогон 11.5.8: реальный процесс `Ktm.DataSaver` (`dotnet publish -c Release`, запуск `dotnet Ktm.DataSaver.dll` как
 дочернего процесса, не `WebApplicationFactory`), код выхода читался из `Process.ExitCode` (PowerShell) или `$?` (bash).
@@ -107,7 +132,7 @@ InvalidOperationException(...)` (условие `cancellationToken.CanBeCanceled
 - `return Environment.ExitCode` в `Program.cs` работает: коды 70 и 1 доходят до процесса, не превращаясь в 0.
 - Не проверялось: код 70 от фатальной ошибки producer (идемпотентный producer не включён) и код 1 без патча.
 
-## Итоговый прогон 11.2 (2026-11-21, HEAD d9f280e)
+### Итоговый прогон 11.2 (2026-11-21, HEAD d9f280e)
 
 - `dotnet build src/Ktm/Ktm.sln -warnaserror`: 0 предупреждений, 0 ошибок.
 - `dotnet test --filter "Category!=Long&Category!=Perf"`: unit 240/240, интеграционные 61/61 (2 мин 36 с).

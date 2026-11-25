@@ -246,4 +246,22 @@ public class HostBehaviorTests
         Assert.Equal(LogLevel.Error, record.Level);
         Assert.DoesNotContain("password", record.Message);
     }
+
+    [Fact]
+    public void AdminNotifier_BreakerOpen_DoesNotCallItConfigurationAndLeaksNoExceptionText()
+    {
+        using var meter = new Meter("test-" + Guid.NewGuid());
+        using var collector = new Collector(meter);
+        var logger = new FakeLogger<LoggingAdminNotifier>();
+
+        new LoggingAdminNotifier(new DataSaverMetrics(meter), logger).NotifyDeadLetterBreakerOpen(new InvalidOperationException("password=abc"), 4);
+
+        Assert.Equal(1, collector.Totals["ktm.datasaver.admin_notifications"]);
+        var record = Assert.Single(logger.Collector.GetSnapshot());
+        Assert.Equal(LogLevel.Error, record.Level);
+        Assert.Contains(nameof(InvalidOperationException), record.Message);
+        Assert.DoesNotContain("password", record.Message);
+        Assert.DoesNotContain("configuration", record.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("permission", record.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

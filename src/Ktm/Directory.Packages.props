@@ -9,6 +9,9 @@
         <!-- Ktm.Api -->
         <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
 
+        <!-- Data Saver admin: только UI-middleware (MIT, встроенные ассеты swagger-ui - Apache-2.0); генерация документа - встроенный Microsoft.AspNetCore.OpenApi, SwaggerGen не нужен -->
+        <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.3.1" />
+
         <!-- Data Saver -->
         <PackageVersion Include="Confluent.Kafka" Version="2.16.0" />
         <PackageVersion Include="Npgsql" Version="10.0.3" />

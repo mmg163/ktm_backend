@@ -11,4 +11,12 @@ public sealed class LoggingAdminNotifier(DataSaverMetrics metrics, ILogger<Loggi
         metrics.AdminNotified();
         logger.LogError("Administrator notification: fatal configuration/permission write error {ErrorType}, attempt {Attempt}", error.GetType().Name, attempt);
     }
+
+    public void NotifyDeadLetterBreakerOpen(Exception error, int attempt)
+    {
+        metrics.AdminNotified();
+        logger.LogError(
+            "Administrator notification: dead letter breaker is open, messages are retried without limit, {ErrorType}, attempt {Attempt}",
+            error.GetType().Name, attempt);
+    }
 }

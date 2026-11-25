@@ -1,0 +1,46 @@
+### Data Saver admin API - примеры запросов (Rider / VS Code REST Client)
+### Аутентификации нет (ADR-0006, риск R-8): порт health доступен только из внутренней сети.
+### Описание контракта: docs/api/data-saver-admin.openapi.json
+
+@baseUrl = http://localhost:8080
+@jobId = 00000000-0000-0000-0000-000000000000
+
+### Разделы admin-области
+GET {{baseUrl}}/admin/v1/sections
+
+### Запуск: dlq (после исправления причины)
+POST {{baseUrl}}/admin/v1/reprocessing/jobs
+Content-Type: application/json
+X-Requested-By: operator-name
+
+{ "source": "dlq" }
+
+### Запуск: rejected, одна причина, не быстрее 100 соб/с
+POST {{baseUrl}}/admin/v1/reprocessing/jobs
+Content-Type: application/json
+X-Requested-By: operator-name
+
+{ "source": "rejected", "reason": "<reason_code>", "maxRate": 100 }
+
+### Запуск: raw за период [from, to) по Kafka-timestamp, UTC с Z, оба времени обязательны
+POST {{baseUrl}}/admin/v1/reprocessing/jobs
+Content-Type: application/json
+X-Requested-By: operator-name
+
+{ "source": "raw", "from": "2026-11-24T08:00:00Z", "to": "2026-11-24T09:00:00Z" }
+
+### Последние задачи (до 10, новые первыми)
+GET {{baseUrl}}/admin/v1/reprocessing/jobs
+
+### Статус и прогресс задачи
+GET {{baseUrl}}/admin/v1/reprocessing/jobs/{{jobId}}
+
+### Отчёт (только после завершения; limit 1..1000)
+GET {{baseUrl}}/admin/v1/reprocessing/jobs/{{jobId}}/report?limit=100&offset=0
+
+### Отмена активной задачи
+POST {{baseUrl}}/admin/v1/reprocessing/jobs/{{jobId}}/cancel
+X-Requested-By: operator-name
+
+### Документ OpenAPI и Swagger UI (SwaggerEnabled=true)
+GET {{baseUrl}}/admin/openapi/v1.json

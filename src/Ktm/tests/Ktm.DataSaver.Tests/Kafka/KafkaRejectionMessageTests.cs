@@ -20,7 +20,7 @@ public sealed class KafkaRejectionMessageTests
     {
         var message = KafkaRejectionPublisher.ToMessage(Rejected(RejectionKind.Rule, "  r-7 ", "ktm.events.rule-rejected"));
 
-        Assert.Equal(6, message.Headers.Count);
+        Assert.Equal(7, message.Headers.Count);
         Assert.Equal("r-7", Encoding.UTF8.GetString(message.Headers.GetLastBytes("ktm-reject-rule-id")));
         Assert.Equal("detail", Encoding.UTF8.GetString(message.Headers.GetLastBytes("ktm-reject-detail")));
         Assert.Equal("r-7", RuleHeader(Rejected(RejectionKind.Validation, "r-7")));
@@ -34,7 +34,7 @@ public sealed class KafkaRejectionMessageTests
     {
         var message = KafkaRejectionPublisher.ToMessage(Rejected(RejectionKind.Format, ruleId));
 
-        Assert.Equal(5, message.Headers.Count);
+        Assert.Equal(6, message.Headers.Count);
         Assert.False(message.Headers.TryGetLastBytes("ktm-reject-rule-id", out _));
     }
 

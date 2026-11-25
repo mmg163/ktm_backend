@@ -138,9 +138,26 @@ public sealed class ConfigExitCodeTests
     }
 
     [Theory]
+    [InlineData("DataSaver__Reprocess__MaxRateLimit", "0")]
+    [InlineData("DataSaver__Reprocess__MaxRatePerSecond", "401")]
+    [InlineData("DataSaver__Reprocess__MaxUnavailableSeconds", "0")]
+    public async Task ReprocessSettingOutOfRange_ExitsWith78_OneLineNamingSetting(string setting, string value)
+    {
+        var environment = ValidBase();
+        environment[setting] = value;
+
+        var result = await RunAsync(environment);
+
+        Assert.Contains(setting, result.Stderr, StringComparison.Ordinal);
+        AssertOneLineWithoutStackOrSecrets(result);
+    }
+
+    [Theory]
     [InlineData("DataSaver__Batch__MaxSize")]
     [InlineData("DataSaver__Health__Port")]
     [InlineData("DataSaver__Trust__Default")]
+    [InlineData("DataSaver__Reprocess__MaxRateLimit")]
+    [InlineData("DataSaver__Admin__SwaggerEnabled")]
     public async Task NonNumericSetting_ExitsWith78_OneLineNamingSettingWithoutItsValue(string setting)
     {
         const string badValue = "abc";
