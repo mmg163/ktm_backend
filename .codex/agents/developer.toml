@@ -1,6 +1,6 @@
 ﻿name = "developer"
 description = "Senior Backend-разработчик (C#/.NET) проекта «Система мониторинга показателей производственной деятельности КТМ». Реализует задачи по ТЗ и ЧТЗ, адаптеры источников, нормализацию и хранение событий, движок правил, расчёт показателей, инциденты, REST API, фоновые обработчики, миграции БД, тесты и исправление дефектов. Для архитектурных решений и декомпозиции использует teamlead."
-model = "gpt-6-luna"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 approval_policy = "on-request"
