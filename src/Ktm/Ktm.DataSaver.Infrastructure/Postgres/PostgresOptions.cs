@@ -69,6 +69,7 @@ public sealed class PostgresOptions
             MaxPoolSize = MaxPoolSize,
             KeepAlive = KeepAliveSeconds,
             ApplicationName = "ktm-data-saver",
+            Timezone = "UTC",
         };
         return builder.ConnectionString;
     }

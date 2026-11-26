@@ -136,7 +136,7 @@ public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
             eventIds[i] = Guid.CreateVersion7(receivedAt);
             sources[i] = e.Source;
             sourceEventIds[i] = e.SourceEventId;
-            occurred[i] = e.OccurredAt.UtcDateTime;
+            occurred[i] = ToUtcTimestamp(e.OccurredAt);
             types[i] = e.EventType;
             devices[i] = e.DeviceId;
             persons[i] = e.ExternalPersonId;
@@ -153,11 +153,11 @@ public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
 
         var command = new NpgsqlBatchCommand(InsertEventsSql);
         var p = command.Parameters;
-        p.Add(new NpgsqlParameter("received_at", NpgsqlDbType.TimestampTz) { Value = receivedAt.UtcDateTime });
+        p.Add(new NpgsqlParameter("received_at", NpgsqlDbType.Timestamp) { Value = ToUtcTimestamp(receivedAt) });
         p.Add(new NpgsqlParameter("event_id", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = eventIds });
         p.Add(new NpgsqlParameter("source", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = sources });
         p.Add(new NpgsqlParameter("source_event_id", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = sourceEventIds });
-        p.Add(new NpgsqlParameter("occurred_at", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = occurred });
+        p.Add(new NpgsqlParameter("occurred_at", NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = occurred });
         p.Add(new NpgsqlParameter("event_type", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = types });
         p.Add(new NpgsqlParameter("device_id", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = devices });
         p.Add(new NpgsqlParameter("external_person_id", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = persons });
@@ -183,21 +183,26 @@ public sealed class NpgsqlEventStore : IEventStore, IBatchWriter
             var correction = e.Correction!;
             sources[i] = e.Source;
             ids[i] = e.SourceEventId;
-            occurred[i] = e.OccurredAt.UtcDateTime;
+            occurred[i] = ToUtcTimestamp(e.OccurredAt);
             originalIds[i] = correction.CorrectsSourceEventId;
-            originalOccurred[i] = correction.CorrectsOccurredAt.UtcDateTime;
+            originalOccurred[i] = ToUtcTimestamp(correction.CorrectsOccurredAt);
             reasons[i] = correction.Reason;
         }
 
         var command = new NpgsqlBatchCommand(InsertCorrectionsSql);
         var p = command.Parameters;
-        p.Add(new NpgsqlParameter("received_at", NpgsqlDbType.TimestampTz) { Value = receivedAt.UtcDateTime });
+        p.Add(new NpgsqlParameter("received_at", NpgsqlDbType.Timestamp) { Value = ToUtcTimestamp(receivedAt) });
         p.Add(new NpgsqlParameter("c_source", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = sources });
         p.Add(new NpgsqlParameter("c_source_event_id", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = ids });
-        p.Add(new NpgsqlParameter("c_occurred_at", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = occurred });
+        p.Add(new NpgsqlParameter("c_occurred_at", NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = occurred });
         p.Add(new NpgsqlParameter("c_original_source_event_id", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = originalIds });
-        p.Add(new NpgsqlParameter("c_original_occurred_at", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz) { Value = originalOccurred });
+        p.Add(new NpgsqlParameter("c_original_occurred_at", NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = originalOccurred });
         p.Add(new NpgsqlParameter("c_reason", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = reasons });
         return command;
     }
+
+    // В БД хранится UTC без метки зоны. Kind.Unspecified нужен Npgsql для timestamp without time zone;
+    // убираем только метку Kind после нормализации самого момента в UTC.
+    private static DateTime ToUtcTimestamp(DateTimeOffset value) =>
+        DateTime.SpecifyKind(value.UtcDateTime, DateTimeKind.Unspecified);
 }

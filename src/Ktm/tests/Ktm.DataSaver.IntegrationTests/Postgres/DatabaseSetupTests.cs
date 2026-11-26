@@ -70,7 +70,7 @@ public sealed class DatabaseSetupTests(PostgresFixture db)
         await using (var insert = new NpgsqlCommand(
             $"""
             INSERT INTO ktm.events (event_id, source, source_event_id, occurred_at, received_at, event_type, external_person_id, trust, payload, schema_version)
-            VALUES (gen_random_uuid(), '{source}', 'e1', now(), now(), 'access.pass', 'p1', 100, jsonb_build_object(), 1)
+            VALUES (gen_random_uuid(), '{source}', 'e1', now() AT TIME ZONE 'UTC', now() AT TIME ZONE 'UTC', 'access.pass', 'p1', 100, jsonb_build_object(), 1)
             """, connection))
         {
             Assert.Equal(1, await insert.ExecuteNonQueryAsync());
@@ -99,7 +99,7 @@ public sealed class DatabaseSetupTests(PostgresFixture db)
         await using var insert = new NpgsqlCommand(
             $"""
             INSERT INTO ktm.events (event_id, source, source_event_id, occurred_at, received_at, event_type, external_person_id, trust, payload, schema_version)
-            VALUES (gen_random_uuid(), '{TestEvents.NewSource()}', 'e1', now(), now(), 'access.pass', 'p1', 100, jsonb_build_object(), 1)
+            VALUES (gen_random_uuid(), '{TestEvents.NewSource()}', 'e1', now() AT TIME ZONE 'UTC', now() AT TIME ZONE 'UTC', 'access.pass', 'p1', 100, jsonb_build_object(), 1)
             """, connection);
         await insert.ExecuteNonQueryAsync();
 

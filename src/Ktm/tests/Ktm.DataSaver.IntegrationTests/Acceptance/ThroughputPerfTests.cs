@@ -88,7 +88,7 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
         return (body, $"{source}:{person}");
     }
 
-    private static long NowMicroTicks() => DateTime.UtcNow.Ticks / 10 * 10; // как в timestamptz: микросекунды
+    private static long NowMicroTicks() => DateTime.UtcNow.Ticks / 10 * 10; // как в PostgreSQL timestamp: микросекунды
 
     private static async Task DelayAsync(int milliseconds, CancellationToken cancellationToken)
     {
@@ -195,15 +195,15 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
             var observed = 0L;
             await using var command = new NpgsqlCommand(
                 "SELECT source_event_id, received_at FROM ktm.events WHERE occurred_at >= @lo AND received_at > @cursor AND source_event_id LIKE @p", connection);
-            var lo = command.Parameters.Add("lo", NpgsqlTypes.NpgsqlDbType.TimestampTz);
-            var cur = command.Parameters.Add("cursor", NpgsqlTypes.NpgsqlDbType.TimestampTz);
+            var lo = command.Parameters.Add("lo", NpgsqlTypes.NpgsqlDbType.Timestamp);
+            var cur = command.Parameters.Add("cursor", NpgsqlTypes.NpgsqlDbType.Timestamp);
             command.Parameters.AddWithValue("p", run.Prefix + "-%");
             while (!abort.IsCancellationRequested)
             {
                 var visibleAt = NowMicroTicks();
                 var poll = Stopwatch.StartNew();
-                lo.Value = cursor.AddSeconds(-LatencyLookbackSeconds);
-                cur.Value = cursor;
+                lo.Value = DateTime.SpecifyKind(cursor.AddSeconds(-LatencyLookbackSeconds), DateTimeKind.Unspecified);
+                cur.Value = DateTime.SpecifyKind(cursor, DateTimeKind.Unspecified);
                 var rows = 0;
                 await using (var reader = await command.ExecuteReaderAsync(abort.Token))
                 {
@@ -211,7 +211,7 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
                     {
                         var id = reader.GetString(0);
                         var seq = long.Parse(id.AsSpan(id.LastIndexOf('-') + 1), CultureInfo.InvariantCulture);
-                        var receivedAt = reader.GetDateTime(1);
+                        var receivedAt = DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc);
                         if (receivedAt > cursor) cursor = receivedAt;
                         rows++;
                         if (!double.IsNaN(latencyMs[seq])) continue;
@@ -477,8 +477,8 @@ public sealed class ThroughputPerfTests(KafkaFixture kafka, PostgresFixture post
         FROM (SELECT gen_random_uuid() AS event_id,
                      (ARRAY['skud','cv','1c-do'])[g % 3 + 1] AS source,
                      'explain-{{runId}}-' || g AS source_event_id,
-                     now() - g * interval '2 milliseconds' AS occurred_at,
-                     now() AS received_at,
+                     (now() AT TIME ZONE 'UTC') - g * interval '2 milliseconds' AS occurred_at,
+                     now() AT TIME ZONE 'UTC' AS received_at,
                      'access_granted' AS event_type,
                      'turnstile-01-entry' AS device_id,
                      'emp-' || (g % 1000) AS external_person_id,

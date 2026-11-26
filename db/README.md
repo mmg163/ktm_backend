@@ -14,6 +14,36 @@ SQL-скрипты схемы `ktm` (журнал событий Data Saver). Р
 | `migrations/V002__rejection_rules.sql` | `ktm_migrator` | таблица правил отбраковки `ktm.rejection_rules` (ADR-0005): CHECK-и, `ktm_app` - только `SELECT`; триггеров, аудита и `NOTIFY` нет |
 | `migrations/V003__rejection_rules_examples.sql` | `ktm_migrator` | шесть **выключенных** примеров правил (`skud`, `cv`, `1c-do`, общее `*`); `INSERT ... ON CONFLICT (rule_id) DO NOTHING` |
 | `migrations/V004__rejection_rules_examples_regex.sql` | `ktm_migrator` | два **выключенных** примера правил с оператором `regex` (`skud-test-device`, `skud-blank-person`); `INSERT ... ON CONFLICT (rule_id) DO NOTHING` |
+| `migrations/V005__utc_timestamp_without_timezone.sql` | `ktm_migrator` | перевод пяти временных колонок журнала из `timestamptz` в `timestamp without time zone` с сохранением UTC; атомарная распаковка и повторное сжатие прежних сжатых чанков |
+
+## Время: UTC без timezone
+
+После полного прогона миграций `ktm.events.occurred_at`, `received_at` и
+`ktm.event_corrections.correction_occurred_at`, `original_occurred_at`, `corrected_at` имеют тип
+`timestamp without time zone`. Значения всех этих колонок трактуются строго как UTC (ADR-0007).
+Часовой пояс SQL-клиента не меняет их отображение. Для ручных вставок передавайте UTC-значения;
+текущее время задавайте выражением `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'` (не неявным приведением `now()`).
+Конфигурируемое смещение сервиса применяется только к местным календарным вычислениям, не к хранилищу.
+
+`V005` не меняет старые миграции и идемпотентно преобразует только колонки, ещё имеющие тип `timestamptz`.
+Преобразование `USING column AT TIME ZONE 'UTC'` явно сохраняет UTC независимо от `TimeZone` мигратора.
+Внутри перехода часовой пояс транзакции временно установлен в UTC, чтобы прежние CHECK-границы чанков
+проверялись корректно при переписывании; после перехода прежний часовой пояс восстанавливается.
+Весь переход — одна транзакция с `ACCESS EXCLUSIVE` на обеих таблицах и чанках; ошибка откатывает переход целиком.
+На TimescaleDB 2.32.1 сжатые чанки предварительно распаковываются и затем сжимаются обратно; несжатые чанки
+остаются несжатыми, настройки сжатия и существующая compression policy/job сохраняются.
+
+Обновление выполняйте в окно обслуживания: остановите все писатели, предусмотрите место под распаковку
+и переписывание чанков, выполните полный прогон миграций, затем запускайте обновлённый Data Saver.
+Длительность и требуемое место зависят от размера журнала. После обновления проверьте типы:
+
+```sql
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'ktm' AND data_type LIKE 'timestamp%'
+ORDER BY table_name, ordinal_position;
+-- Пять строк, везде timestamp without time zone.
+```
 
 ## Правила
 
