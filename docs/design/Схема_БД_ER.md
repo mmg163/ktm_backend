@@ -18,6 +18,8 @@
 
 ---
 
+Все `timestamp` в этом документе означают **`timestamp without time zone`, всегда UTC**. Итоговая схема после V005 описана в [ADR-0007](../adr/0007-utc-timestamp-storage.md). V001 сохраняет исторический `timestamptz`; переход существующих данных выполняется только V005 через `AT TIME ZONE 'UTC'`. Справочный DDL ниже показывает итоговое состояние, а не заменяет последовательность миграций.
+
 ## 1. ER-диаграмма
 
 ```mermaid
@@ -26,8 +28,8 @@ erDiagram
         uuid        event_id            PK "генерирует Data Saver; PK = (event_id, occurred_at)"
         text        source              "skud | cv | 1c-do ... ; часть натурального ключа"
         text        source_event_id     "часть натурального ключа"
-        timestamptz occurred_at         PK "UTC; ключ секционирования hypertable; часть натурального ключа"
-        timestamptz received_at         "время приёма Data Saver"
+        timestamp occurred_at         PK "UTC; ключ секционирования hypertable; часть натурального ключа"
+        timestamp received_at         "время приёма Data Saver"
         text        event_type          "свободная строка, без справочника"
         text        device_id           "NULL допустим (1c-do)"
         text        external_person_id  "карта, табельный номер"
@@ -39,15 +41,15 @@ erDiagram
         uuid        correction_id               PK
         text        source                      "источник корректирующего события"
         text        correction_source_event_id  "натуральный ключ корректирующего (UQ вместе с source, correction_occurred_at)"
-        timestamptz correction_occurred_at
+        timestamp correction_occurred_at
         uuid        correction_event_id         "event_id корректирующей записи в events (UQ)"
         text        original_source             "натуральный ключ исходного"
         text        original_source_event_id
-        timestamptz original_occurred_at
+        timestamp original_occurred_at
         uuid        original_event_id           "NULL, если исходного ещё нет"
         text        reason                      "NULL допустим"
         text        actor                       "источник/адаптер"
-        timestamptz corrected_at
+        timestamp corrected_at
     }
     events ||--o{ event_corrections : "логическая связь, БЕЗ FK (см. 4.2)"
 ```
@@ -66,8 +68,8 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 | `event_id` | `uuid` | нет | Идентификатор записи; генерирует Data Saver (Q3 из `kafka-event-format.md`: при конфликте по ключу сгенерированный uuid отбрасывается). |
 | `source` | `text` | нет | `skud`, `cv`, `1c-do`... Значение из сообщения. CHECK на список значений **не ставим** (новый источник не должен требовать миграции; допустимые значения проверяет валидация схемы сообщения). |
 | `source_event_id` | `text` | нет | ID события в источнике, 1..128 символов (по контракту сообщения). |
-| `occurred_at` | `timestamptz` | нет | Время события в источнике, UTC. Колонка секционирования. |
-| `received_at` | `timestamptz` | нет | Время приёма Data Saver (`docs/05` п. 5.1 требует хранить). Заполняет приложение; значения по умолчанию `now()` нет, чтобы время задавалось единым образом на пачку. |
+| `occurred_at` | `timestamp` | нет | Время события в источнике, UTC. Колонка секционирования. |
+| `received_at` | `timestamp` | нет | Время приёма Data Saver (`docs/05` п. 5.1 требует хранить). Заполняет приложение; значения по умолчанию `now()` нет, чтобы время задавалось единым образом на пачку. |
 | `event_type` | `text` | нет | Тип события, `snake_case`. Справочника нет; отбраковка неизвестных - правило C5, не схема. |
 | `device_id` | `text` | **да** | Турникет/дверь/камера. NULL для `1c-do` (Q1). Заменителей-констант не вводим. |
 | `external_person_id` | `text` | нет | Идентификатор человека как в источнике. Привязка к сотруднику (`employee_id`) в журнал не входит - это уровень 1, отдельно. |
@@ -99,15 +101,15 @@ Hypertable TimescaleDB по `occurred_at`. Только вставка: UPDATE �
 | `correction_id` | `uuid` | нет | PK, `DEFAULT gen_random_uuid()`. Не `identity`, чтобы роли сервиса не требовалось право на последовательность. |
 | `source` | `text` | нет | Источник корректирующего события (из сообщения). |
 | `correction_source_event_id` | `text` | нет | `sourceEventId` корректирующего сообщения. |
-| `correction_occurred_at` | `timestamptz` | нет | `occurredAt` корректирующего сообщения. |
+| `correction_occurred_at` | `timestamp` | нет | `occurredAt` корректирующего сообщения. |
 | `correction_event_id` | `uuid` | нет | `event_id` корректирующей записи **как она лежит в `events`** (при повторной доставке - ранее сохранённый, см. ниже). |
 | `original_source` | `text` | нет | Источник исходного события. Сейчас всегда равен `source` (кросс-источниковые исправления контрактом не допускаются, п. 9 контракта - вопрос открыт); колонка заведена, чтобы их допуск не менял схему. |
 | `original_source_event_id` | `text` | нет | `correction.correctsSourceEventId`. |
-| `original_occurred_at` | `timestamptz` | нет | `correction.correctsOccurredAt`. Вместе с двумя предыдущими - натуральный ключ исходного. |
+| `original_occurred_at` | `timestamp` | нет | `correction.correctsOccurredAt`. Вместе с двумя предыдущими - натуральный ключ исходного. |
 | `original_event_id` | `uuid` | **да** | `event_id` исходного, если на момент приёма он найден. NULL, если исходное событие ещё не пришло. |
 | `reason` | `text` | **да** | `correction.reason`; в сообщении необязателен. |
 | `actor` | `text` | нет | Кто исправил: имя источника/адаптера. Ручные исправления человеком в контракт не входят (там нужен пользователь из аудита). |
-| `corrected_at` | `timestamptz` | нет | Когда: `received_at` корректирующей записи. |
+| `corrected_at` | `timestamp` | нет | Когда: `received_at` корректирующей записи. |
 
 Ключи:
 
@@ -275,8 +277,8 @@ EXPLAIN (ANALYZE, BUFFERS)
 SELECT event_id, occurred_at, source, event_type, device_id, trust
 FROM   ktm.events
 WHERE  external_person_id = 'EMP-000123'
-  AND  occurred_at >= TIMESTAMPTZ '2026-11-01 00:00:00+00'
-  AND  occurred_at <  TIMESTAMPTZ '2026-11-08 00:00:00+00'
+  AND  occurred_at >= TIMESTAMP '2026-11-01 00:00:00'
+  AND  occurred_at <  TIMESTAMP '2026-11-08 00:00:00'
 ORDER  BY occurred_at DESC
 LIMIT  200;
 -- Ожидается: Custom Scan (ChunkAppend) / Index Scan Backward using ..._ix_events_person_time
@@ -322,8 +324,8 @@ CREATE TABLE IF NOT EXISTS ktm.events (
     event_id            uuid        NOT NULL,
     source              text        NOT NULL,
     source_event_id     text        NOT NULL,
-    occurred_at         timestamptz NOT NULL,
-    received_at         timestamptz NOT NULL,
+    occurred_at         timestamp NOT NULL,
+    received_at         timestamp NOT NULL,
     event_type          text        NOT NULL,
     device_id           text        NULL,
     external_person_id  text        NOT NULL,
@@ -365,15 +367,15 @@ CREATE TABLE IF NOT EXISTS ktm.event_corrections (
     correction_id               uuid        NOT NULL DEFAULT gen_random_uuid(),
     source                      text        NOT NULL,
     correction_source_event_id  text        NOT NULL,
-    correction_occurred_at      timestamptz NOT NULL,
+    correction_occurred_at      timestamp NOT NULL,
     correction_event_id         uuid        NOT NULL,
     original_source             text        NOT NULL,
     original_source_event_id    text        NOT NULL,
-    original_occurred_at        timestamptz NOT NULL,
+    original_occurred_at        timestamp NOT NULL,
     original_event_id           uuid        NULL,
     reason                      text        NULL,
     actor                       text        NOT NULL,
-    corrected_at                timestamptz NOT NULL,
+    corrected_at                timestamp NOT NULL,
 
     CONSTRAINT pk_event_corrections PRIMARY KEY (correction_id),
     CONSTRAINT ux_event_corrections_correction_key

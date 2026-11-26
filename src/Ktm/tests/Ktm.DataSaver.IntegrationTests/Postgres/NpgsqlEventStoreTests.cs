@@ -33,8 +33,8 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var rows = new List<EventRow>();
         while (await reader.ReadAsync())
         {
-            rows.Add(new EventRow(reader.GetGuid(0), reader.GetString(1), reader.GetFieldValue<DateTimeOffset>(2),
-                reader.GetFieldValue<DateTimeOffset>(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
+            rows.Add(new EventRow(reader.GetGuid(0), reader.GetString(1), ReadUtc(reader, 2),
+                ReadUtc(reader, 3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
                 reader.GetString(6), reader.GetInt16(7), reader.GetString(8), reader.GetInt16(9), reader.GetString(10)));
         }
 
@@ -56,7 +56,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         while (await reader.ReadAsync())
         {
             rows.Add(new CorrectionRow(reader.GetString(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
-                reader.GetFieldValue<DateTimeOffset>(4), reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                ReadUtc(reader, 4), reader.IsDBNull(5) ? null : reader.GetGuid(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetString(7)));
         }
 
@@ -212,7 +212,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var insert =
             $"""
             INSERT INTO ktm.events (event_id, source, source_event_id, occurred_at, received_at, event_type, external_person_id, trust, payload, schema_version)
-            VALUES (gen_random_uuid(), '{source}', 'e1', '2026-03-10Z', now(), 'access.pass', 'p1', 100, jsonb_build_object(), 1)
+            VALUES (gen_random_uuid(), '{source}', 'e1', '2026-03-10', now() AT TIME ZONE 'UTC', 'access.pass', 'p1', 100, jsonb_build_object(), 1)
             """;
         await new NpgsqlCommand(insert, connection).ExecuteNonQueryAsync();
 
@@ -361,7 +361,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         {
             await migrator.OpenAsync();
             await using var compress = new NpgsqlCommand(
-                "SELECT count(compress_chunk(c, if_not_compressed => true)) FROM show_chunks('ktm.events', older_than => '2025-02-01Z'::timestamptz, newer_than => '2025-01-01Z'::timestamptz) c",
+                "SELECT count(compress_chunk(c, if_not_compressed => true)) FROM show_chunks('ktm.events', older_than => '2025-02-01'::timestamp, newer_than => '2025-01-01'::timestamp) c",
                 migrator);
             Assert.True((long)(await compress.ExecuteScalarAsync())! >= 1);
             await using var check = new NpgsqlCommand(
@@ -482,8 +482,8 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
             insert.Parameters.AddWithValue("id", Guid.NewGuid());
             insert.Parameters.AddWithValue("s", blocked.Source);
             insert.Parameters.AddWithValue("e", blocked.SourceEventId);
-            insert.Parameters.AddWithValue("o", blocked.OccurredAt.UtcDateTime);
-            insert.Parameters.AddWithValue("r", Now.UtcDateTime);
+            insert.Parameters.AddWithValue("o", DateTime.SpecifyKind(blocked.OccurredAt.UtcDateTime, DateTimeKind.Unspecified));
+            insert.Parameters.AddWithValue("r", DateTime.SpecifyKind(Now.UtcDateTime, DateTimeKind.Unspecified));
             await insert.ExecuteNonQueryAsync();
         }
 
@@ -502,6 +502,9 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
 
         Assert.Equal(WriteErrorClass.Transient, WriteErrorClassifier.Classify(ex));
     }
+
+    private static DateTimeOffset ReadUtc(NpgsqlDataReader reader, int ordinal) =>
+        new(DateTime.SpecifyKind(reader.GetDateTime(ordinal), DateTimeKind.Utc));
 
     private sealed record EventRow(Guid EventId, string SourceEventId, DateTimeOffset OccurredAt, DateTimeOffset ReceivedAt,
         string EventType, string? DeviceId, string ExternalPersonId, short Trust, string Payload, short SchemaVersion, string Json);

@@ -7,6 +7,11 @@
   `docs/07-нефункциональные-требования.md` п. 7.1-7.2, `docs/api/kafka-event-format.md`,
   `docs/design/Схема_БД_ER.md`, `infra/kafka/README.md`; ADR-0001, ADR-0003, ADR-0004.
 
+> Дополнение 2026-11-26: [ADR-0007](0007-utc-timestamp-storage.md) заменяет физический тип временных колонок
+> на `timestamp without time zone` с UTC-семантикой. Примеры `timestamptz[]` ниже относятся к исходной V001;
+> после V005 параметры записи — `timestamp[]` и `DateTimeKind.Unspecified` после нормализации в UTC.
+> Внешний формат события и доменные `DateTimeOffset` остаются UTC.
+
 ## 1. Контекст
 
 Data Saver - единственный писатель в `ktm.events` / `ktm.event_corrections`. Ограничения:

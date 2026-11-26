@@ -290,21 +290,21 @@ public sealed class RulesEnginePerfTests(KafkaFixture kafka, PostgresFixture pos
             await connection.OpenAsync(abort.Token);
             var cursor = startedAt;
             await using var command = new NpgsqlCommand("SELECT source_event_id, received_at FROM ktm.events WHERE occurred_at >= @lo AND received_at > @cursor AND source_event_id LIKE @p", connection);
-            var lo = command.Parameters.Add("lo", NpgsqlTypes.NpgsqlDbType.TimestampTz);
-            var cur = command.Parameters.Add("cursor", NpgsqlTypes.NpgsqlDbType.TimestampTz);
+            var lo = command.Parameters.Add("lo", NpgsqlTypes.NpgsqlDbType.Timestamp);
+            var cur = command.Parameters.Add("cursor", NpgsqlTypes.NpgsqlDbType.Timestamp);
             command.Parameters.AddWithValue("p", run.Prefix + "-%");
             while (!abort.IsCancellationRequested)
             {
                 var visibleAt = DateTime.UtcNow.Ticks / 10 * 10;
-                lo.Value = cursor.AddSeconds(-15);
-                cur.Value = cursor;
+                lo.Value = DateTime.SpecifyKind(cursor.AddSeconds(-15), DateTimeKind.Unspecified);
+                cur.Value = DateTime.SpecifyKind(cursor, DateTimeKind.Unspecified);
                 await using (var reader = await command.ExecuteReaderAsync(abort.Token))
                 {
                     while (await reader.ReadAsync(abort.Token))
                     {
                         var id = reader.GetString(0);
                         var seq = long.Parse(id.AsSpan(id.LastIndexOf('-') + 1), CultureInfo.InvariantCulture);
-                        var receivedAt = reader.GetDateTime(1);
+                        var receivedAt = DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc);
                         if (receivedAt > cursor) cursor = receivedAt;
                         if (double.IsNaN(latencyMs[seq])) latencyMs[seq] = (visibleAt - published[seq]) / 10_000.0;
                     }

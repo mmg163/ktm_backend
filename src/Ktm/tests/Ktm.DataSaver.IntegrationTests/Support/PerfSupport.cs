@@ -67,7 +67,7 @@ internal sealed class PerfDatabase : IAsyncDisposable, IDatabaseEndpoint
             INSERT INTO ktm.events (event_id, source, source_event_id, occurred_at, received_at, event_type, device_id,
                                     external_person_id, trust, payload, schema_version)
             SELECT gen_random_uuid(), (ARRAY['skud','cv','1c-do'])[g % 3 + 1], 'seed-' || g,
-                   now() - g * interval '250 milliseconds', now(), 'access_granted', 'turnstile-01-entry',
+                   (now() AT TIME ZONE 'UTC') - g * interval '250 milliseconds', now() AT TIME ZONE 'UTC', 'access_granted', 'turnstile-01-entry',
                    'emp-' || (g % 1000), 100::smallint, '{"direction":"in","zone":"main-gate"}'::jsonb, 1::smallint
             FROM generate_series(1, @rows) g
             """, connection) { CommandTimeout = 300 })
