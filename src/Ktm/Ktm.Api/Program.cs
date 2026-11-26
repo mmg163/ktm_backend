@@ -1,5 +1,13 @@
 var builder = WebApplication.CreateBuilder(args);
 
+// Фиксированное смещение используется только для местных календарных дат.
+var offsetMinutes = builder.Configuration.GetValue<int>("Time:UtcOffsetMinutes");
+if (offsetMinutes is < -840 or > 840)
+{
+    throw new InvalidOperationException("Time:UtcOffsetMinutes must be between -840 and 840.");
+}
+var utcOffset = TimeSpan.FromMinutes(offsetMinutes);
+
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
@@ -21,10 +29,11 @@ var summaries = new[]
 
 app.MapGet("/weatherforecast", () =>
     {
+        var localToday = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(utcOffset).DateTime);
         var forecast = Enumerable.Range(1, 5).Select(index =>
                 new WeatherForecast
                 (
-                    DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
+                    localToday.AddDays(index),
                     Random.Shared.Next(-20, 55),
                     summaries[Random.Shared.Next(summaries.Length)]
                 ))
