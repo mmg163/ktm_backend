@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Reprocessing;
+namespace Ktm.DataSaver.Application.Reprocessing;
 
 /// <summary>Партиция источника: читается диапазон <c>[StartOffset, EndOffset)</c>; <c>EndOffset</c> снят при открытии (снимок).</summary>
 public sealed record ReplayPartition(string Topic, int Partition, long StartOffset, long EndOffset)

@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Batching;
+namespace Ktm.DataSaver.Application.Batching;
 
 /// <summary>Позиция сообщения в Kafka: топик, партиция, offset.</summary>
 public readonly record struct PartitionOffset(string Topic, int Partition, long Offset);

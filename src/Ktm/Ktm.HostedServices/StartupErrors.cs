@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Microsoft.Extensions.Options;
 
-namespace Ktm.DataSaver;
+namespace Ktm.HostedServices;
 
 /// <summary>Сообщение и код выхода при некорректной конфигурации (EX_CONFIG, sysexits.h).</summary>
 internal static partial class StartupErrors

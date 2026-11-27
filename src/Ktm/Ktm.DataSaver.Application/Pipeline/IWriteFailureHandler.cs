@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 public enum WriteFailureKind
 {

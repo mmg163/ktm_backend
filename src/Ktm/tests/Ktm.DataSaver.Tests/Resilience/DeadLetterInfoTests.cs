@@ -1,5 +1,5 @@
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Tests.Ingestion;
 
 namespace Ktm.DataSaver.Tests.Resilience;

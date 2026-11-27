@@ -1,6 +1,6 @@
 using Npgsql;
 
-namespace Ktm.DataSaver.Health;
+namespace Ktm.HostedServices.Health;
 
 /// <summary>Короткая проверка БД для readiness с пределом ожидания; недоступность - результат, а не исключение.</summary>
 public static class DatabaseProbe

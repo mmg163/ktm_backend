@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Ktm.DataSaver.Core.Reprocessing;
+namespace Ktm.DataSaver.Application.Reprocessing;
 
 /// <summary>Откуда читаются сообщения повторной обработки (ADR-0006 п. 2.6).</summary>
 public enum ReprocessSource

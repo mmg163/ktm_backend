@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>
 /// Маркер исключения, которое Infrastructure распознала как отказ инфраструктуры (исчерпание пула соединений,

@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;

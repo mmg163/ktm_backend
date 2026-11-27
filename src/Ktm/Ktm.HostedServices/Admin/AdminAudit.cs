@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Reprocessing;
 
-namespace Ktm.DataSaver.Admin;
+namespace Ktm.HostedServices.Admin;
 
 /// <summary>
 /// Аудит вызовов admin-API структурной записью в лог (ADR-0006 В-6, R-8): идентификатор задачи, время UTC, параметры,

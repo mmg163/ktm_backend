@@ -1,11 +1,9 @@
 using System.Text.Json.Serialization;
-using Ktm.DataSaver.Configuration;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.OpenApi;
+using Ktm.HostedServices.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 
-namespace Ktm.DataSaver.Admin;
+namespace Ktm.HostedServices.Admin;
 
 /// <summary>
 /// Admin-область Data Saver на порту health (ADR-0006 п. 2.6, design Р-8): группа <c>/admin/v1</c>, реестр разделов

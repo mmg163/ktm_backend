@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 public enum WriteErrorClass
 {

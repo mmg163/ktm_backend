@@ -1,11 +1,11 @@
 using System.Text;
 using Confluent.Kafka;
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Hosting;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;
 using Ktm.DataSaver.IntegrationTests.Support;
+using Ktm.HostedServices.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;

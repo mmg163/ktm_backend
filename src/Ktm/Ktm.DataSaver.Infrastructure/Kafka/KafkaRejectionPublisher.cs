@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text;
 using Confluent.Kafka;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Pipeline;
 using Microsoft.Extensions.Logging;
 
 namespace Ktm.DataSaver.Infrastructure.Kafka;

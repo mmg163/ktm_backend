@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>Результат проверки события портом C5: принять либо отбраковать с причиной.</summary>
 public sealed record ValidationResult

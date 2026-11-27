@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>
 /// Неожиданное исключение стадии конвейера (разбор, C5, правила, маппинг) с указанием стадии (ADR-0006 п. 2.2).

@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>
 /// Пауза между повторами записи: min(Initial * Multiplier^n, Max) с джиттером +-JitterFraction; итог не превышает Max.

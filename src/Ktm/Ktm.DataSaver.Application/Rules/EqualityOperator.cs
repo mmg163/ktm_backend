@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// <c>==</c> и <c>!=</c> (ADR-0005 п. 2.6): строгое сравнение без приведения типов. Строки - ordinal, регистр значим; числа - как

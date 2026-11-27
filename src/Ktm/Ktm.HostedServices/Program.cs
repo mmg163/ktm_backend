@@ -1,9 +1,8 @@
-using Ktm.DataSaver;
-using Ktm.DataSaver.Admin;
-using Ktm.DataSaver.Health;
 using Ktm.Binding.Infrastructure;
+using Ktm.HostedServices;
+using Ktm.HostedServices.Admin;
+using Ktm.HostedServices.Health;
 using Ktm.Interpretation.Infrastructure;
-using Ktm.Hosting;
 using Microsoft.Extensions.Options;
 
 try
@@ -52,4 +51,7 @@ static void AddCoreWorkers(IServiceCollection services, IConfiguration configura
     }
 }
 
-public partial class Program;
+namespace Ktm.HostedServices
+{
+    public partial class Program;
+}

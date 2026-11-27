@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Ingestion;
+namespace Ktm.DataSaver.Application.Ingestion;
 
 /// <summary>Заглушка: только считает оповещения по видам; видимость обеспечивает Error-лог цикла.</summary>
 public sealed class CountingAdminNotifier : IAdminNotifier

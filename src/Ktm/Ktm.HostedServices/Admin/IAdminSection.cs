@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace Ktm.DataSaver.Admin;
+namespace Ktm.HostedServices.Admin;
 
 /// <summary>
 /// Раздел admin-области <c>/admin/v1/{Id}</c> (ADR-0006 п. 2.6). Новый раздел - это класс, реализующий интерфейс, и строка

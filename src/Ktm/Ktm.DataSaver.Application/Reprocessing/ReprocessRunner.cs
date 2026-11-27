@@ -1,11 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Resilience;
 using Microsoft.Extensions.Logging;
 
-namespace Ktm.DataSaver.Core.Reprocessing;
+namespace Ktm.DataSaver.Application.Reprocessing;
 
 /// <summary>Итог исполнения задачи раннером: <c>ErrorCode</c> заполнен только для <see cref="ReprocessOutcome.Failed"/>.</summary>
 public sealed record ReprocessRunResult(ReprocessOutcome Outcome, string? ErrorCode);

@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// Пределы оператора <c>regex</c> (ADR-0005 п. 2.7): предел времени одного совпадения и лимиты шаблона. Значения времени и

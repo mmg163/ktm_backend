@@ -1,9 +1,10 @@
-using Ktm.DataSaver.Configuration;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Rules;
-using Ktm.DataSaver.Health;
-using Ktm.DataSaver.Hosting;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Rules;
+using Ktm.HostedServices;
+using Ktm.HostedServices.Configuration;
+using Ktm.HostedServices.Health;
+using Ktm.HostedServices.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

@@ -1,6 +1,6 @@
 using Ktm.DataSaver.Infrastructure.Kafka;
 
-namespace Ktm.DataSaver.Hosting;
+namespace Ktm.HostedServices.Hosting;
 
 /// <summary>
 /// Завершение процесса при фатальной ошибке: выставляет код выхода и просит host остановиться штатно (дописать пачку,

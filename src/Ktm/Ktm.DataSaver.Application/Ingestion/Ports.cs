@@ -1,9 +1,9 @@
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Resilience;
 
-namespace Ktm.DataSaver.Core.Ingestion;
+namespace Ktm.DataSaver.Application.Ingestion;
 
 /// <summary>Изменения назначения партиций, накопленные источником с прошлого вызова.</summary>
 public sealed record AssignmentChanges(

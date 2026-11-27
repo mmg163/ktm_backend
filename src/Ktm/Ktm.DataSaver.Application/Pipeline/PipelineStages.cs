@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>Значения заголовка <c>ktm-dlq-stage</c> (ADR-0006 п. 2.4): стадия обработки, на которой возникло исключение.</summary>
 public static class PipelineStages

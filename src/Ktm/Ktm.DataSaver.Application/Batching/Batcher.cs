@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Batching;
+namespace Ktm.DataSaver.Application.Batching;
 
 /// <summary>
 /// Накопитель пачки: закрывается по размеру или по истечении максимального времени ожидания,

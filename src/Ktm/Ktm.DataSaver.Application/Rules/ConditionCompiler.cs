@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>Результат компиляции условия: корень либо список ошибок (формат <c>&lt;путь&gt;: &lt;причина&gt;</c>).</summary>
 public sealed record ConditionCompileResult(IConditionNode? Root, IReadOnlyList<string> Errors, int RegexNodeCount = 0)

@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Configuration;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Health;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.HostedServices.Configuration;
+using Ktm.HostedServices.Health;
 using Microsoft.Extensions.Options;
 
 namespace Ktm.DataSaver.Tests.Ingestion;

@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 public enum RuleRefreshOutcome
 {

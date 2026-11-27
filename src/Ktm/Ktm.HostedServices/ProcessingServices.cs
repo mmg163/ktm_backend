@@ -1,4 +1,4 @@
-namespace Ktm.Hosting;
+namespace Ktm.HostedServices;
 
 internal sealed class BindingService(ILogger<BindingService> logger) : BackgroundService
 {

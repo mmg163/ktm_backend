@@ -1,8 +1,8 @@
 using System.Text;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// Стадия отбраковки правилами (ADR-0005 п. 2.8, 2.9): берёт текущий снимок один раз, вычисляет правила источника события

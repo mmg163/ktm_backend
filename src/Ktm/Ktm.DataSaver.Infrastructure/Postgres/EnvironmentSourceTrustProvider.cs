@@ -1,5 +1,5 @@
 using System.Globalization;
-using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Application.Ingestion;
 
 namespace Ktm.DataSaver.Infrastructure.Postgres;
 

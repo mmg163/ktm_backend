@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Model;
+namespace Ktm.DataSaver.Application.Model;
 
 /// <summary>Сообщение, прочитанное из топика: тело и ключ - ровно как получены, без интерпретации.</summary>
 public sealed record ConsumedMessage(

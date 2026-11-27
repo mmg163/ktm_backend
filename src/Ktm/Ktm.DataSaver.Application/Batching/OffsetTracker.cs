@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Batching;
+namespace Ktm.DataSaver.Application.Batching;
 
 /// <summary>
 /// Трекер offset пачки. Учитывает все сообщения пачки, включая отбракованные (иначе отравленное сообщение

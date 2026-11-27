@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>Вид отбраковки. <see cref="Rule"/> - отбраковка движком правил (ADR-0005).</summary>
 public enum RejectionKind

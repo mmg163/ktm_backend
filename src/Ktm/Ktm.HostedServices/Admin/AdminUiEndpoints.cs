@@ -1,7 +1,6 @@
-using System.Reflection;
 using Microsoft.AspNetCore.StaticFiles;
 
-namespace Ktm.DataSaver.Admin;
+namespace Ktm.HostedServices.Admin;
 
 /// <summary>
 /// Отдача статической админки <c>/admin/ui/</c> из встроенных ресурсов сборки (design Р-8): без сборки фронтенда,

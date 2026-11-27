@@ -1,8 +1,8 @@
 using System.Reflection;
 using System.Text;
-using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Application.Pipeline;
 
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>Значения заголовка <c>ktm-dlq-reason</c> (ADR-0006 п. 2.4).</summary>
 public static class DeadLetterReasons

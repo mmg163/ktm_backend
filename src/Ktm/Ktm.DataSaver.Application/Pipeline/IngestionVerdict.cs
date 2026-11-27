@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>Вердикт стадии по сообщению: <see cref="Accept"/> либо <see cref="Reject"/> с <see cref="RejectionInfo"/>.</summary>
 public sealed record IngestionVerdict

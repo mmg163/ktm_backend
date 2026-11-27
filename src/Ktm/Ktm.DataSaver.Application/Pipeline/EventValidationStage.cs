@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>Стадия-адаптер порта <see cref="IEventValidator"/> (C5). Исключения порта не перехватывает.</summary>
 public sealed class EventValidationStage(IEventValidator validator) : IIngestionStage

@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>Ошибка отдельного правила, найденная источником (строка не отобразилась в <see cref="RuleDefinition"/>).</summary>
 public sealed record RuleProblem(string? RuleId, string Location, string Message, int? RuleVersion = null);

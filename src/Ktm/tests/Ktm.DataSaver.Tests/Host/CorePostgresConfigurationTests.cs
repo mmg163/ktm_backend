@@ -1,5 +1,5 @@
 using Ktm.Binding.Infrastructure;
-using Ktm.Hosting;
+using Ktm.HostedServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

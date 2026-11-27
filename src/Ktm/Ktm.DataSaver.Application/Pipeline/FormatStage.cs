@@ -1,7 +1,7 @@
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>Итог стадии формата: <c>Event</c> заполнен тогда и только тогда, когда вердикт - Accept.</summary>
 public sealed record FormatStageResult(ParsedEvent? Event, IngestionVerdict Verdict);

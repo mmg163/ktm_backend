@@ -1,7 +1,7 @@
 using System.Data.Common;
 using System.Net.Sockets;
 
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>
 /// Чистая функция классификации ошибок (ADR-0002 D-7, ADR-0006 п. 2.2). Порядок: инфраструктура (повтор без предела)

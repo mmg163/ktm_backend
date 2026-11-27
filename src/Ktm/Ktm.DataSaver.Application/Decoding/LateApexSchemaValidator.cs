@@ -1,11 +1,11 @@
 using System.Globalization;
 using System.Text.Json;
-using LateApexEarlySpeed.Json.Schema;
 using System.Text.RegularExpressions;
+using LateApexEarlySpeed.Json.Schema;
 using LateApexEarlySpeed.Json.Schema.Common;
 using LateApexEarlySpeed.Json.Schema.Keywords;
 
-namespace Ktm.DataSaver.Core.Decoding;
+namespace Ktm.DataSaver.Application.Decoding;
 
 /// <summary>
 /// Реализация <see cref="ISchemaValidator"/> на LateApexEarlySpeed.Json.Schema (BSD-3-Clause, draft 2020-12);

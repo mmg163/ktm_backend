@@ -1,7 +1,7 @@
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>Ядовитый элемент: ошибка записи класса Data или Unexpected на одиночном сообщении.</summary>
 public sealed record IsolatedPoison<T>(T Item, WriteErrorClass Class, Exception Error);

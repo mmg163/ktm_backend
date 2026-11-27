@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Rules;
 using Npgsql;
 
 namespace Ktm.DataSaver.Infrastructure.Postgres;

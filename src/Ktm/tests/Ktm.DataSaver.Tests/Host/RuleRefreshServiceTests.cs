@@ -1,11 +1,12 @@
 using System.Diagnostics.Metrics;
-using Ktm.DataSaver.Core.Resilience;
-using Ktm.DataSaver.Core.Rules;
-using Ktm.DataSaver.Hosting;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Resilience;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.Tests.Decoding;
 using Ktm.DataSaver.Tests.Ingestion;
+using Ktm.HostedServices.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
@@ -428,7 +429,19 @@ public sealed class RuleRefreshServiceTests : IAsyncLifetime
         var options = new KafkaOptions { BootstrapServers = "localhost:1" };
         var throttle = new LogThrottle(TimeProvider.System, LogThrottle.DefaultInterval);
         var handler = new KafkaFatalErrorHandler(_terminator, new FakeLogger<KafkaFatalErrorHandler>(), throttle);
-        var worker = new DataSaverWorker(
+        var workerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, _) =>
+            {
+                if (ReferenceEquals(instrument.Meter, _meter) && instrument.Name == "ktm.datasaver.loop.state")
+                {
+                    workerStarted.TrySetResult();
+                }
+            }
+        };
+        listener.Start();
+        using var worker = new DataSaverWorker(
             h.Loop,
             consumer,
             new KafkaRejectionPublisher(options, handler, new FakeLogger<KafkaRejectionPublisher>(), throttle),
@@ -441,12 +454,20 @@ public sealed class RuleRefreshServiceTests : IAsyncLifetime
 
         await service.StartAsync(_timeout.Token);
         await worker.StartAsync(CancellationToken.None);
-        await Eventually(() => _source.Calls == 1);
-        await worker.StopAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => _source.Calls == 1);
+            await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await worker.StopAsync(CancellationToken.None);
 
-        Assert.Equal(0, consumer.Starts);
-        Assert.Equal(1, consumer.Disposals);
-        Assert.Empty(_terminator.ExitCodes);
+            Assert.Equal(0, consumer.Starts);
+            Assert.Equal(1, consumer.Disposals);
+            Assert.Empty(_terminator.ExitCodes);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
     }
 
     private sealed class CountingConsumer : IConsumerLifecycle
@@ -470,7 +491,7 @@ public sealed class RuleRefreshServiceTests : IAsyncLifetime
         var stage = new RuleRejectionStage(provider);
         var bytes = EventSamples.Bytes(EventSamples.Skud);
         var message = EventSamples.Message(bytes);
-        var parsed = new Ktm.DataSaver.Core.Decoding.EventDecoder().Decode(bytes).Event!;
+        var parsed = new EventDecoder().Decode(bytes).Event!;
 
         var first = stage.Evaluate(message, parsed);
         var second = stage.Evaluate(message, parsed);

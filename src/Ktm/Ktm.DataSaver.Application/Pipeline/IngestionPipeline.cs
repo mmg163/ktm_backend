@@ -1,7 +1,7 @@
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Resilience;
 
-namespace Ktm.DataSaver.Core.Pipeline;
+namespace Ktm.DataSaver.Application.Pipeline;
 
 /// <summary>
 /// Итог обработки одного сообщения: <c>Event</c> заполнен только при <c>Verdict.IsAccepted</c> и отсутствии <c>DeadLetter</c>.

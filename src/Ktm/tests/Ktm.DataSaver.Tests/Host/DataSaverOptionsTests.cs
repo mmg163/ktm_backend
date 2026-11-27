@@ -1,8 +1,9 @@
-using Ktm.DataSaver.Admin;
-using Ktm.DataSaver.Configuration;
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Hosting;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.Infrastructure.Kafka;
+using Ktm.HostedServices;
+using Ktm.HostedServices.Admin;
+using Ktm.HostedServices.Configuration;
+using Ktm.HostedServices.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

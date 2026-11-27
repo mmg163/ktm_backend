@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Ingestion;
+namespace Ktm.DataSaver.Application.Ingestion;
 
 /// <summary>
 /// Степень доверия к данным источника на момент приёма, 0..100 (Схема_БД_ER.md п. 7.1). Значение фиксируется в строке

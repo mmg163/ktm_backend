@@ -1,4 +1,5 @@
-using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Ingestion;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Kafka;
@@ -137,7 +138,7 @@ public sealed class RestartAndScalingAcceptanceTests(KafkaFixture kafka, Postgre
     {
         private int _calls;
 
-        public ValueTask CommitAsync(IReadOnlyList<Ktm.DataSaver.Core.Batching.PartitionOffset> offsets, CancellationToken cancellationToken) =>
+        public ValueTask CommitAsync(IReadOnlyList<PartitionOffset> offsets, CancellationToken cancellationToken) =>
             Interlocked.Increment(ref _calls) <= commitsKept ? inner.CommitAsync(offsets, cancellationToken) : ValueTask.CompletedTask;
     }
 }

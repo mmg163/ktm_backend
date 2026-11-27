@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>Правило, не вошедшее в снимок. <c>Reason</c> не содержит значений из сообщений (при загрузке их нет).</summary>
 public sealed record RuleSnapshotError(string? RuleId, int? RuleVersion, string Reason);

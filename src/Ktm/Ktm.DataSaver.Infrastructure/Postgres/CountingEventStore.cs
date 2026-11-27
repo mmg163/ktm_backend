@@ -1,5 +1,5 @@
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Reprocessing;
 
 namespace Ktm.DataSaver.Infrastructure.Postgres;
 

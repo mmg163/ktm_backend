@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Decoding;
+namespace Ktm.DataSaver.Application.Decoding;
 
 /// <summary>
 /// Проверки тела, которое PostgreSQL <c>jsonb</c> отвергает целиком (ошибка класса 22 валит всю пачку и блокирует партицию):

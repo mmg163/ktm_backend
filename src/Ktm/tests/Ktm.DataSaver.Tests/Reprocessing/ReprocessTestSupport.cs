@@ -1,8 +1,8 @@
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Reprocessing;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Tests.Decoding;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;

@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
-namespace Ktm.Hosting;
+namespace Ktm.HostedServices;
 
 public sealed class PostgresSettings
 {

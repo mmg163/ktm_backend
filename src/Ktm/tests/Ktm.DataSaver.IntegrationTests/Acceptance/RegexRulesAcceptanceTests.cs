@@ -1,6 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;

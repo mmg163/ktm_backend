@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>
 /// Предохранитель dlq (ADR-0006 п. 2.3, 6): считает сообщения, ушедшие в dlq подряд, без успешной записи события между ними.

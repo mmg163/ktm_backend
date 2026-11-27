@@ -1,9 +1,9 @@
-using Ktm.DataSaver.Configuration;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Rules;
+using Ktm.HostedServices.Configuration;
 using Microsoft.Extensions.Options;
 
-namespace Ktm.DataSaver.Health;
+namespace Ktm.HostedServices.Health;
 
 /// <summary>Сигналы состояния сервиса для health-проверок; реализация изолирует вычислитель от Kafka, Npgsql и цикла.</summary>
 public interface IHealthSignals

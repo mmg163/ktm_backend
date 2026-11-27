@@ -1,6 +1,6 @@
 using Confluent.Kafka;
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Model;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Microsoft.Extensions.Logging.Abstractions;
 

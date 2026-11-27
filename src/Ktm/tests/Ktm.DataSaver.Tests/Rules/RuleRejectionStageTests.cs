@@ -1,8 +1,7 @@
 using System.Text.Json;
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Tests.Decoding;
 using static Ktm.DataSaver.Tests.Rules.RuleTestSupport;
 

@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Decoding;
+namespace Ktm.DataSaver.Application.Decoding;
 
 /// <summary>Результат разбора: либо событие, либо причина отбраковки формата (<see cref="RejectReasons"/>) с пояснением.</summary>
 public sealed record DecodeResult

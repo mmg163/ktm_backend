@@ -1,10 +1,10 @@
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Resilience;
 using Microsoft.Extensions.Logging;
 
-namespace Ktm.DataSaver.Core.Ingestion;
+namespace Ktm.DataSaver.Application.Ingestion;
 
 /// <summary>Состояние цикла приёма для readiness-проверки.</summary>
 public enum IngestionState

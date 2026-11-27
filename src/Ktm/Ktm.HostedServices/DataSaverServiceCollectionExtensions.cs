@@ -1,25 +1,24 @@
-using Ktm.DataSaver.Configuration;
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
-using Ktm.DataSaver.Admin;
-using Ktm.DataSaver.Admin.Reprocessing;
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Core.Rules;
-using Ktm.DataSaver.Health;
-using Ktm.DataSaver.Hosting;
+using System.Diagnostics.Metrics;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Reprocessing;
+using Ktm.DataSaver.Application.Resilience;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.Infrastructure.Postgres;
+using Ktm.HostedServices.Admin;
+using Ktm.HostedServices.Configuration;
+using Ktm.HostedServices.Health;
+using Ktm.HostedServices.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using System.Diagnostics.Metrics;
 
-namespace Ktm.DataSaver;
+namespace Ktm.HostedServices;
 
 /// <summary>Composition root Data Saver: опции с проверкой при старте, компоненты цикла, health и worker.</summary>
 public static class DataSaverServiceCollectionExtensions

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Decoding;
+namespace Ktm.DataSaver.Application.Decoding;
 
 /// <summary>Результат проверки по JSON Schema; <c>Errors</c> - краткое пояснение без значений из тела (только при невалидности).</summary>
 public sealed record SchemaValidationResult(bool IsValid, string Errors)

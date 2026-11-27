@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>
 /// Исключение, несущее SQLSTATE. Infrastructure адаптирует исключение драйвера БД к этому контракту,

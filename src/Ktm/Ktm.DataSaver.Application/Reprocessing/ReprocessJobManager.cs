@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace Ktm.DataSaver.Core.Reprocessing;
+namespace Ktm.DataSaver.Application.Reprocessing;
 
 public enum StartStatus
 {

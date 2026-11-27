@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Resilience;
+namespace Ktm.DataSaver.Application.Resilience;
 
 /// <summary>
 /// Политика ухода в dlq (ADR-0006 п. 2.3): <c>MaxAttempts</c> - число неудачных попыток по ошибке, привязанной к сообщению,

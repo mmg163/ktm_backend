@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// Оператор листового сравнения. Новый оператор добавляется классом и <see cref="OperatorRegistry.Register"/>, без правок

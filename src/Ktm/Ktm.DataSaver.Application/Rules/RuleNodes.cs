@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// Листовая проверка, созданная оператором при загрузке правила. Потокобезопасна и не изменяется; вычисление не бросает исключений

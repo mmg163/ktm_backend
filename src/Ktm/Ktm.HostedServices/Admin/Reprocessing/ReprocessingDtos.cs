@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Reprocessing;
 
-namespace Ktm.DataSaver.Admin.Reprocessing;
+namespace Ktm.HostedServices.Admin.Reprocessing;
 
 /// <summary>Запрос запуска повторной обработки. Время - RFC 3339, только UTC с суффиксом <c>Z</c>.</summary>
 public sealed record StartJobRequest

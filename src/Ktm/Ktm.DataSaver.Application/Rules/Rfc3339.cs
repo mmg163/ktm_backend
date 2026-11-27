@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>Разбор даты RFC 3339 с обязательной зоной (<c>Z</c> или <c>±hh:mm</c>); результат сравнивается как момент времени.</summary>
 internal static class Rfc3339

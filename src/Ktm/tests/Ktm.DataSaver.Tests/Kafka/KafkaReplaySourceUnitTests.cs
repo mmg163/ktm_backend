@@ -1,10 +1,10 @@
 using System.Text;
 using Confluent.Kafka;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Reprocessing;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Microsoft.Extensions.Time.Testing;
 

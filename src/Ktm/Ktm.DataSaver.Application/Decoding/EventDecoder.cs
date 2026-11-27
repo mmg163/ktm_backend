@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Model;
 
-namespace Ktm.DataSaver.Core.Decoding;
+namespace Ktm.DataSaver.Application.Decoding;
 
 /// <summary>
 /// Разбирает тело сообщения в <see cref="ParsedEvent"/>: JSON, версия формата, схема

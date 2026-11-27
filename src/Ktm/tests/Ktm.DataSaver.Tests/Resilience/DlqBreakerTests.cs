@@ -1,4 +1,4 @@
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Resilience;
 
 namespace Ktm.DataSaver.Tests.Resilience;
 

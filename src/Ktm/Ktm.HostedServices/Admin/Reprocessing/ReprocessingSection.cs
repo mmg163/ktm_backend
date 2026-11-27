@@ -1,15 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Ktm.DataSaver.Configuration;
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.Infrastructure.Kafka;
+using Ktm.HostedServices.Configuration;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.OpenApi;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 
-namespace Ktm.DataSaver.Admin.Reprocessing;
+namespace Ktm.HostedServices.Admin.Reprocessing;
 
 /// <summary>
 /// Раздел <c>reprocessing</c>: тонкий слой над <see cref="ReprocessJobManager"/> (ADR-0006 п. 2.6) - разбор запроса, вызов сервиса,

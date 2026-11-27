@@ -1,9 +1,9 @@
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 
-namespace Ktm.DataSaver.Hosting;
+namespace Ktm.HostedServices.Hosting;
 
 /// <summary>
 /// Запускает <see cref="IngestionLoop"/> и владеет порядком остановки (D-8): цикл дописывает пачку и делает commit,

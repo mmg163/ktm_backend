@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Reprocessing;
 
-namespace Ktm.DataSaver.Hosting;
+namespace Ktm.HostedServices.Hosting;
 
 /// <summary>
 /// Привязка задач повторной обработки к жизненному циклу host (ADR-0006 п. 2.6): при остановке отменяет активную задачу и ждёт её

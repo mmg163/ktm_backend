@@ -1,8 +1,8 @@
-using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Application.Ingestion;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Npgsql;
 
-namespace Ktm.DataSaver.Health;
+namespace Ktm.HostedServices.Health;
 
 /// <summary>
 /// Боевая реализация сигналов: цикл, consumer, проверка брокера (запрос метаданных, предел 2 с, кэш 5 с) и короткая

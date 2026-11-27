@@ -1,10 +1,10 @@
-using Ktm.DataSaver.Core.Resilience;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Resilience;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Microsoft.Extensions.Options;
 
-namespace Ktm.DataSaver.Configuration;
+namespace Ktm.HostedServices.Configuration;
 
 /// <summary>Корневая секция <c>DataSaver</c> (переменные <c>DataSaver__*</c>, ADR-0002 D-11).</summary>
 public sealed class DataSaverOptions
@@ -149,7 +149,7 @@ public sealed class RulesOptions
     public int RegexTimeoutMs { get; set; } = RegexPolicy.DefaultMatchTimeoutMs;
 
     /// <summary>Предел числа узлов regex в наборе применяемых правил.</summary>
-    public int MaxRegexNodes { get; set; } = Ktm.DataSaver.Core.Rules.RuleSnapshotBuilder.DefaultMaxRegexNodes;
+    public int MaxRegexNodes { get; set; } = RuleSnapshotBuilder.DefaultMaxRegexNodes;
 }
 
 /// <summary>Проверка опций при старте: сообщение содержит имя настройки в форме окружения и никогда - значения секретов.</summary>

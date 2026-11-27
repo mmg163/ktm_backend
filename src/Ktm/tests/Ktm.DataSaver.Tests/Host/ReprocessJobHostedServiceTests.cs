@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Hosting;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.Tests.Admin;
+using Ktm.HostedServices.Hosting;
 
 namespace Ktm.DataSaver.Tests.Host;
 

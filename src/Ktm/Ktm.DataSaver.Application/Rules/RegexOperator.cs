@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>Маркер листа <c>regex</c>: по нему компилятор считает узлы для лимитов правила и набора.</summary>
 internal interface IRegexPredicate : IPredicate

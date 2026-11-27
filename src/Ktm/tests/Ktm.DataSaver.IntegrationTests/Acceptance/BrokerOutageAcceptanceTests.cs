@@ -1,11 +1,11 @@
 using System.Net;
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Health;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Ingestion;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Postgres;
 using Ktm.DataSaver.IntegrationTests.Support;
+using Ktm.HostedServices.Health;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Testcontainers.Kafka;

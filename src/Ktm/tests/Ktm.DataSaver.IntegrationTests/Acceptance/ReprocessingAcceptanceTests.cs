@@ -1,4 +1,3 @@
-using Ktm.DataSaver.Core.Reprocessing;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;
@@ -6,6 +5,7 @@ using Ktm.DataSaver.IntegrationTests.Support;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using System.Text.Json;
+using Ktm.DataSaver.Application.Reprocessing;
 
 namespace Ktm.DataSaver.IntegrationTests.Acceptance;
 

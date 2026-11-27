@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Health;
+namespace Ktm.HostedServices.Health;
 
 /// <summary>Тело ответа health-маршрутов; имена JSON status/reason (camelCase по умолчанию Results.Json).</summary>
 public sealed record HealthResponse(string Status, string? Reason);

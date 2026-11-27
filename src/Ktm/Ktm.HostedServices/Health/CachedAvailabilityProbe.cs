@@ -1,4 +1,4 @@
-namespace Ktm.DataSaver.Health;
+namespace Ktm.HostedServices.Health;
 
 /// <summary>
 /// Проверка доступности зависимости для readiness: предел ожидания, кэш результата и единственный проверочный запрос

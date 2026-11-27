@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// Определение правила отбраковки в терминах модели, без имён колонок БД (ADR-0005 п. 2.1).

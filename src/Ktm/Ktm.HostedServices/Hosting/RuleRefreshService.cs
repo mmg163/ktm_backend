@@ -1,10 +1,10 @@
 using System.Globalization;
-using Ktm.DataSaver.Core.Resilience;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Resilience;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 
-namespace Ktm.DataSaver.Hosting;
+namespace Ktm.HostedServices.Hosting;
 
 /// <summary>
 /// Загрузка и перезагрузка правил отбраковки (ADR-0005 п. 2.10). Первая загрузка выполняется до старта цикла приёма:

@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 
-namespace Ktm.DataSaver.Core.Rules;
+namespace Ktm.DataSaver.Application.Rules;
 
 /// <summary>
 /// Путь к полю тела сообщения (грамматика <c>var</c> JsonLogic, ADR-0005 п. 2.5): сегменты через точку,
