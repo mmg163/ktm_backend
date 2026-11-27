@@ -419,7 +419,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         await using var poison = await PoisonConstraint.AddAsync(db.AdminConnectionString);
 
         var ex = await Assert.ThrowsAsync<PostgresStoreException>(
-            () => Store().WriteBatchAsync([Event(source, "ok", At(0)), Event(source, PoisonConstraint.PoisonId, At(1))], Now, CancellationToken.None));
+            () => Store().WriteBatchAsync([Event(source, "ok", At(0)), Event(source, poison.PoisonId, At(1))], Now, CancellationToken.None));
         await Store().WriteBatchAsync([Event(source, "ok", At(0))], Now, CancellationToken.None);
 
         Assert.Equal(("23514", PoisonConstraint.Name, WriteErrorClass.Data), (ex.SqlState, ex.ConstraintName, WriteErrorClassifier.Classify(ex)));
@@ -428,8 +428,8 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
 
         // «Исправление причины»: после снятия ограничения то же событие записывается.
         await poison.DropAsync();
-        await Store().WriteBatchAsync([Event(source, PoisonConstraint.PoisonId, At(1))], Now, CancellationToken.None);
-        Assert.Equal(["ok", PoisonConstraint.PoisonId], (await ReadEventsAsync(source)).Select(r => r.SourceEventId));
+        await Store().WriteBatchAsync([Event(source, poison.PoisonId, At(1))], Now, CancellationToken.None);
+        Assert.Equal(["ok", poison.PoisonId], (await ReadEventsAsync(source)).Select(r => r.SourceEventId));
     }
 
     // Фиксирует итоговый список инфраструктурных и «сообщенческих» исключений на реальном драйвере (ADR-0006 п. 2.2, R-1).

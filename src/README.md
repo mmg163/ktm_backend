@@ -88,7 +88,7 @@ flowchart TB
         PG[(PostgreSQL + TimescaleDB<br/>ktm.events, ktm.event_corrections)]
     end
 
-    subgraph HOST[Ktm.DataSaver: Host]
+    subgraph HOST[Ktm.HostedServices: Host]
         W[DataSaverWorker]
         RS[RuleRefreshService]
         H[Health: /health/live, /health/ready]
@@ -104,7 +104,7 @@ flowchart TB
         OBS[Observability: метрики, логи]
     end
 
-    subgraph CORE[Ktm.DataSaver.Core: домен и порты]
+    subgraph CORE[Ktm.DataSaver.Application: домен и порты]
         LOOP[IngestionLoop]
         BT[Batcher + OffsetTracker]
         PIPE[IngestionPipeline:<br/>FormatStage -> EventValidationStage C5<br/>-> RuleRejectionStage]
@@ -152,7 +152,7 @@ flowchart LR
 
 | Проект | Модуль | Роль |
 |---|---|---|
-| `Ktm.DataSaver.Core` | `Model`, `Decoding` | `ParsedEvent`, `ConsumedMessage`; `EventDecoder`: JSON -> событие, проверка схемы, UTC-микросекунды, причины отбраковки (`malformed_json`, `unknown_schema_version`, `invalid_schema`) |
+| `Ktm.DataSaver.Application` | `Model`, `Decoding` | `ParsedEvent`, `ConsumedMessage`; `EventDecoder`: JSON -> событие, проверка схемы, UTC-микросекунды, причины отбраковки (`malformed_json`, `unknown_schema_version`, `invalid_schema`) |
 | | `Pipeline` | стадии `Accept`/`Reject`, `FormatStage`, порты `IEventValidator` (C5) и `IWriteFailureHandler` (C6) |
 | | `Rules` | движок правил отбраковки: `RuleDefinition`, язык условий (реестр операторов, `FieldPath`, `ConditionCompiler`), `RuleSnapshot`, `RuleRejectionStage`, порты `IRuleSource` и `IRuleChangeSignal` |
 | | `Batching` | `Batcher` (размер или время), `OffsetTracker` |
@@ -161,7 +161,7 @@ flowchart LR
 | `Ktm.DataSaver.Infrastructure` | `Kafka` | consumer, producer `rejected` (идемпотентный, `acks=all`), commit, обработка фатальных ошибок, троттлинг логов librdkafka |
 | | `Postgres` | `NpgsqlEventStore` (пакетная запись, корректировки), `NpgsqlRuleSource` (чтение таблицы правил), `PostgresOptions`, `EnvironmentSourceTrustProvider` |
 | | `Observability` | метрики `System.Diagnostics.Metrics` (meter `Ktm.DataSaver`), декораторы портов, `LoggingAdminNotifier` |
-| `Ktm.DataSaver` | Host | composition root, `DataSaverWorker`, `RuleRefreshService` (первая загрузка и опрос таблицы правил; расположение в Host, а не в Infrastructure - решение лида: сервис использует internal `StartupErrors` и сопрягается с `DataSaverWorker`), опции `DataSaver__*` с проверкой при старте, health (Kestrel), коды выхода |
+| `Ktm.HostedServices` | Host | composition root, `DataSaverWorker`, `RuleRefreshService` (первая загрузка и опрос таблицы правил; расположение в Host, а не в Infrastructure - решение лида: сервис использует internal `StartupErrors` и сопрягается с `DataSaverWorker`), опции `DataSaver__*` с проверкой при старте, health (Kestrel), коды выхода |
 | `Ktm.DataSaver.Tests` | unit | Core и host на fake-портах |
 | `Ktm.DataSaver.IntegrationTests` | интеграционные | Testcontainers: `apache/kafka` и `timescale/timescaledb` pg16; приёмочные, `Long`, `Perf` |
 | `Ktm.Api` | - | шаблонная заготовка, не относится к Data Saver |
@@ -172,7 +172,7 @@ flowchart LR
 
 Все настройки - переменные окружения `DataSaver__<Секция>__<Имя>`; значения по умолчанию заданы в классах options и
 проверяются при старте. Ошибка - отказ запуска с сообщением, где названа переменная (значения секретов в него не входят).
-Источник: `Ktm.DataSaver/Configuration/DataSaverOptions.cs`, `Ktm.DataSaver.Infrastructure/Kafka/KafkaOptions.cs`,
+Источник: `Ktm.HostedServices/Configuration/DataSaverOptions.cs`, `Ktm.DataSaver.Infrastructure/Kafka/KafkaOptions.cs`,
 `Ktm.DataSaver.Infrastructure/Postgres/PostgresOptions.cs`; шаблон - `deploy/data-saver/.env.example`.
 
 Секреты (пароли БД и SASL) задаются **файлом** (`*PasswordFile`, в compose - Docker secret); параметры `Password` и
@@ -336,7 +336,7 @@ Health (порт `DataSaver__Health__Port`, внутренняя сеть, бе�
 
 ## 7. Правила отбраковки
 
-Стадия `RuleRejectionStage` (`Ktm.DataSaver.Core/Rules`) стоит в конвейере после проверки формата и C5. Для сообщения она
+Стадия `RuleRejectionStage` (`Ktm.DataSaver.Application/Rules`) стоит в конвейере после проверки формата и C5. Для сообщения она
 вычисляет включённые правила его источника и общие (`source = '*'`) из таблицы `ktm.rejection_rules` в порядке `priority`, затем
 `rule_id`; сработало первое - событие не пишется в `ktm.events`, а публикуется в `ktm.events.rejected` с исходным телом и
 заголовками `ktm-reject-reason` (= код правила), `ktm-reject-rule-id`, `ktm-reject-rule-name`, `ktm-reject-rule-version`,
@@ -431,3 +431,39 @@ curl -sS "$BASE/admin/v1/reprocessing/jobs"                                     
 - `/admin/swagger` и `/admin/openapi/v1.json` - описание API; отключаются `DataSaver__Admin__SwaggerEnabled=false`.
 - Новый раздел админки: серверный класс `IAdminSection` + клиентский модуль `sections/<id>.js` и строка в `sections/index.js`; каркас не меняется
   (порядок - `docs/manuals/data-saver.md`, п. 12.6).
+
+
+## 9. Локальный контур ядра
+
+`Ktm.Api` обслуживает HTTP, `Ktm.HostedServices` выбирает фоновые обработчики.
+`HostedServices__DataSaver__Enabled` по умолчанию `true`, `HostedServices__Binding__Enabled`
+и `HostedServices__Interpretation__Enabled` — `false`. У Binding и Interpretation пока
+только каркасы, обработка событий появится в последующем изменении.
+
+В корне репозитория создайте каталог `deploy/local/secrets` и файлы с паролями
+`postgres_password`, `ktm_migrator_password`, `ktm_app_password`, `ktm_api_password`,
+`ktm_binding_password`, `ktm_interpretation_password`. Файлы предназначены для локальной
+разработки и не входят в Git. Затем выполните:
+
+```powershell
+docker compose -f deploy/local/docker-compose.yml up -d
+docker compose -f deploy/local/docker-compose.yml ps --all
+```
+
+Мигратор и `kafka-init` должны завершиться с кодом 0. PostgreSQL доступен на `localhost:15432`,
+Kafka — на `localhost:19092`. Запустите API `dotnet run --project src/Ktm/Ktm.Api`.
+Для Data Saver задайте настройки `DataSaver__Postgres__Host=localhost`,
+`DataSaver__Postgres__Port=15432`, `DataSaver__Postgres__Database=ktm_revisor`,
+`DataSaver__Postgres__Username=ktm_app`, путь к файлу в `DataSaver__Postgres__PasswordFile`,
+`DataSaver__Postgres__SslMode=Disable`, `DataSaver__Kafka__BootstrapServers=localhost:19092`
+и `DataSaver__Kafka__Topic=ktm.events.raw.skud`, затем запустите
+`dotnet run --project src/Ktm/Ktm.HostedServices`.
+
+Для каждого включённого обработчика ядра задайте отдельную секцию
+`Ktm__Binding__Postgres__*` или `Ktm__Interpretation__Postgres__*` с полями `Host`, `Port`,
+`Database`, `Username` и `Password` либо `Password_FILE`. Для API секция
+`Ktm__Api__Postgres__*` подключает контексты Directory и Identity. Значение пароля и файл
+взаимоисключающие. Валидация активных секций выполняется при старте.
+
+EF Core используется для CRUD с отдельным scoped `DbContext` на модуль. Миграции схемы —
+только SQL-файлы `db/migrations`, применяемые разовой задачей под `ktm_migrator`.

@@ -25,7 +25,7 @@ public sealed class ConfigExitCodeTests
             RedirectStandardOutput = true,
             UseShellExecute = false,
         };
-        info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "Ktm.DataSaver.dll"));
+        info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "Ktm.HostedServices.dll"));
         foreach (var key in info.Environment.Keys.Where(k => k.StartsWith("DataSaver__", StringComparison.OrdinalIgnoreCase)).ToList())
         {
             info.Environment.Remove(key);

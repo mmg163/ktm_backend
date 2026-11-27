@@ -34,7 +34,7 @@ public sealed class DlqUnavailableAcceptanceTests(PostgresFixture postgres)
             settings["DataSaver:Shutdown:TimeoutSeconds"] = "10";
         });
         await app.WaitReadyAsync();
-        await run.PublishAsync([("valid", run.Json(run.EventId(0))), ("poison", run.Json(PoisonConstraint.PoisonId))]);
+        await run.PublishAsync([("valid", run.Json(run.EventId(0))), ("poison", run.Json(constraint.PoisonId))]);
         await Wait.UntilAsync(() => app.Counters["ktm.datasaver.retries[dlq_publish]"] > 0, "DLQ publication retry", TimeSpan.FromSeconds(120));
         Assert.Equal(HttpStatusCode.ServiceUnavailable, await app.ReadyStatusAsync());
         Assert.Equal(0, await run.CommittedAsync());

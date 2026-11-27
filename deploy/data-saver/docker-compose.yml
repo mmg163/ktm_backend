@@ -46,6 +46,10 @@ services:
     restart: unless-stopped
     # Настройки DataSaver__* - из .env; секрет БД - только файлом (DataSaver__Postgres__PasswordFile в .env).
     env_file: .env
+    environment:
+      HostedServices__DataSaver__Enabled: "true"
+      HostedServices__Binding__Enabled: "false"
+      HostedServices__Interpretation__Enabled: "false"
     secrets:
       - ktm_app_password
     # Стартует только после успешной миграции; при ошибке migrate сервис не создаётся (docker compose logs migrate).

@@ -22,7 +22,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\Ktm.DataSaver\Ktm.DataSaver.csproj" />
+        <ProjectReference Include="..\..\Ktm.HostedServices\Ktm.HostedServices.csproj" />
     </ItemGroup>
 
 </Project>

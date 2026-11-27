@@ -7,16 +7,26 @@ WORKDIR /src
 
 # Слой восстановления пакетов: только файлы проектов и общие props.
 COPY src/Ktm/Directory.Build.props src/Ktm/Directory.Build.targets src/Ktm/Directory.Packages.props src/Ktm/
-COPY src/Ktm/Ktm.DataSaver/Ktm.DataSaver.csproj src/Ktm/Ktm.DataSaver/
-COPY src/Ktm/Ktm.DataSaver.Core/Ktm.DataSaver.Core.csproj src/Ktm/Ktm.DataSaver.Core/
+COPY src/Ktm/Ktm.HostedServices/Ktm.HostedServices.csproj src/Ktm/Ktm.HostedServices/
+COPY src/Ktm/Ktm.DataSaver.Application/Ktm.DataSaver.Application.csproj src/Ktm/Ktm.DataSaver.Application/
 COPY src/Ktm/Ktm.DataSaver.Infrastructure/Ktm.DataSaver.Infrastructure.csproj src/Ktm/Ktm.DataSaver.Infrastructure/
-RUN dotnet restore src/Ktm/Ktm.DataSaver/Ktm.DataSaver.csproj
+COPY src/Ktm/Ktm.Shared/Ktm.Shared.csproj src/Ktm/Ktm.Shared/
+COPY src/Ktm/Ktm.Binding.Application/Ktm.Binding.Application.csproj src/Ktm/Ktm.Binding.Application/
+COPY src/Ktm/Ktm.Binding.Infrastructure/Ktm.Binding.Infrastructure.csproj src/Ktm/Ktm.Binding.Infrastructure/
+COPY src/Ktm/Ktm.Interpretation.Application/Ktm.Interpretation.Application.csproj src/Ktm/Ktm.Interpretation.Application/
+COPY src/Ktm/Ktm.Interpretation.Infrastructure/Ktm.Interpretation.Infrastructure.csproj src/Ktm/Ktm.Interpretation.Infrastructure/
+RUN dotnet restore src/Ktm/Ktm.HostedServices/Ktm.HostedServices.csproj
 
 COPY docs/api docs/api
-COPY src/Ktm/Ktm.DataSaver src/Ktm/Ktm.DataSaver
-COPY src/Ktm/Ktm.DataSaver.Core src/Ktm/Ktm.DataSaver.Core
+COPY src/Ktm/Ktm.HostedServices src/Ktm/Ktm.HostedServices
+COPY src/Ktm/Ktm.DataSaver.Application src/Ktm/Ktm.DataSaver.Application
 COPY src/Ktm/Ktm.DataSaver.Infrastructure src/Ktm/Ktm.DataSaver.Infrastructure
-RUN dotnet publish src/Ktm/Ktm.DataSaver/Ktm.DataSaver.csproj \
+COPY src/Ktm/Ktm.Shared src/Ktm/Ktm.Shared
+COPY src/Ktm/Ktm.Binding.Application src/Ktm/Ktm.Binding.Application
+COPY src/Ktm/Ktm.Binding.Infrastructure src/Ktm/Ktm.Binding.Infrastructure
+COPY src/Ktm/Ktm.Interpretation.Application src/Ktm/Ktm.Interpretation.Application
+COPY src/Ktm/Ktm.Interpretation.Infrastructure src/Ktm/Ktm.Interpretation.Infrastructure
+RUN dotnet publish src/Ktm/Ktm.HostedServices/Ktm.HostedServices.csproj \
     --no-restore -c Release -o /app/publish /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
@@ -28,4 +38,4 @@ EXPOSE 8080
 
 # Непривилегированный пользователь `app` из базового образа.
 USER $APP_UID
-ENTRYPOINT ["dotnet", "Ktm.DataSaver.dll"]
+ENTRYPOINT ["dotnet", "Ktm.HostedServices.dll"]

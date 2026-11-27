@@ -1,8 +1,6 @@
 <Project>
 
-    <!-- ADR-0001: строгие правила - в проектах Data Saver (флаг IsDataSaverProject в csproj);
-         существующий Ktm.Api не затрагивается. Условие стоит в .targets, а не в .props: флаг задаётся в теле
-         csproj, которое вычисляется после Directory.Build.props. -->
+    <!-- Версия языка Data Saver зафиксирована в ADR-0001. -->
     <PropertyGroup Condition="'$(IsDataSaverProject)' == 'true'">
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <LangVersion>14</LangVersion>

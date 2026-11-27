@@ -55,7 +55,7 @@ public sealed class KafkaDeadLetterPublisherTests(KafkaFixture kafka)
     [Fact]
     public async Task Publishing_to_a_missing_topic_yields_failure_result_instead_of_exception()
     {
-        // Брокер dev-стенда не создаёт топики автоматически (AllowAutoCreateTopics=false в фикстуре); иначе тест неприменим.
+        // Брокер dev-стенда не создаёт топики автоматически (KAFKA_AUTO_CREATE_TOPICS_ENABLE=false в фикстуре); иначе тест неприменим.
         using var publisher = Publisher("ktm.events.dlq-missing-" + Guid.NewGuid().ToString("N"), timeoutMs: 3000);
 
         var result = await publisher.PublishAsync([Item()], CancellationToken.None);

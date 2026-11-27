@@ -40,7 +40,7 @@ public sealed class DlqAcceptanceTests(KafkaFixture kafka, PostgresFixture postg
         await using var constraint = await PoisonConstraint.AddAsync(postgres.AdminConnectionString);
         await using var app = DataSaverInstance.Start(run, settings => settings["DataSaver:Kafka:DlqTopic"] = dlq);
         await app.WaitReadyAsync();
-        var body = run.Json(PoisonConstraint.PoisonId);
+        var body = run.Json(constraint.PoisonId);
         await run.PublishAsync([("before", run.Json(run.EventId(0))), ("poison-key", body), ("after", run.Json(run.EventId(1)))]);
         using var sourceReader = new ConsumerBuilder<byte[], byte[]>(new ConsumerConfig
         {
@@ -59,7 +59,8 @@ public sealed class DlqAcceptanceTests(KafkaFixture kafka, PostgresFixture postg
         Assert.Equal(0, await run.DuplicateKeyGroupsAsync());
         await using var connection = new NpgsqlConnection(postgres.AdminConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("SELECT count(*) FROM ktm.events WHERE source_event_id = 'poison'", connection);
+        await using var command = new NpgsqlCommand("SELECT count(*) FROM ktm.events WHERE source_event_id = @id", connection);
+        command.Parameters.AddWithValue("id", constraint.PoisonId);
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
         var record = Assert.Single(run.Kafka.Read(dlq, 2, TimeSpan.FromSeconds(3)));
         Assert.Equal("poison-key", Encoding.UTF8.GetString(record.Key!));

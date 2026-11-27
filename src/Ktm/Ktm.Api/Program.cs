@@ -1,16 +1,28 @@
+using Ktm.Shared;
+using Microsoft.Extensions.Options;
+using Ktm.Directory.Infrastructure;
+using Ktm.Identity.Infrastructure;
+using Ktm.Hosting;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Фиксированное смещение используется только для местных календарных дат.
-var offsetMinutes = builder.Configuration.GetValue<int>("Time:UtcOffsetMinutes");
-if (offsetMinutes is < -840 or > 840)
-{
-    throw new InvalidOperationException("Time:UtcOffsetMinutes must be between -840 and 840.");
-}
-var utcOffset = TimeSpan.FromMinutes(offsetMinutes);
+builder.Services.AddOptions<TimeOptions>()
+    .Bind(builder.Configuration.GetSection("Time"))
+    .Validate(options => options.UtcOffsetMinutes is >= -840 and <= 840,
+        "Time:UtcOffsetMinutes must be between -840 and 840.")
+    .ValidateOnStart();
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.AddProblemDetails();
+builder.Services.AddSingleton(TimeProvider.System);
+if (builder.Configuration.GetSection("Ktm:Api:Postgres").Exists())
+{
+    builder.Services.AddModuleDatabase<DirectoryDbContext>(builder.Configuration, "Ktm:Api:Postgres");
+    builder.Services.AddModuleDatabase<IdentityDbContext>(builder.Configuration, "Ktm:Api:Postgres");
+}
 
 var app = builder.Build();
 
@@ -20,6 +32,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseExceptionHandler();
 app.UseHttpsRedirection();
 
 var summaries = new[]
@@ -29,7 +42,8 @@ var summaries = new[]
 
 app.MapGet("/weatherforecast", () =>
     {
-        var localToday = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(utcOffset).DateTime);
+        var utcOffset = TimeSpan.FromMinutes(app.Services.GetRequiredService<IOptions<TimeOptions>>().Value.UtcOffsetMinutes);
+        var localToday = DateOnly.FromDateTime(app.Services.GetRequiredService<TimeProvider>().GetUtcNow().ToOffset(utcOffset).DateTime);
         var forecast = Enumerable.Range(1, 5).Select(index =>
                 new WeatherForecast
                 (
@@ -48,3 +62,5 @@ record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 {
     public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
 }
+
+public partial class Program;

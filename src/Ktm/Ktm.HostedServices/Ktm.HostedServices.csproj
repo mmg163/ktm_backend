@@ -21,4 +21,8 @@
         <ProjectReference Include="..\Ktm.DataSaver.Infrastructure\Ktm.DataSaver.Infrastructure.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <ProjectReference Include="..\Ktm.Binding.Infrastructure\Ktm.Binding.Infrastructure.csproj" />
+        <ProjectReference Include="..\Ktm.Interpretation.Infrastructure\Ktm.Interpretation.Infrastructure.csproj" />
+    </ItemGroup>
 </Project>

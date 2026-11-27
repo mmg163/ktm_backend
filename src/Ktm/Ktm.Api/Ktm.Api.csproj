@@ -4,4 +4,9 @@
         <PackageReference Include="Microsoft.AspNetCore.OpenApi"/>
     </ItemGroup>
 
+    <ItemGroup>
+        <ProjectReference Include="..\Ktm.Directory.Infrastructure\Ktm.Directory.Infrastructure.csproj" />
+        <ProjectReference Include="..\Ktm.Identity.Infrastructure\Ktm.Identity.Infrastructure.csproj" />
+    </ItemGroup>
+    <ItemGroup><Compile Include="..\Ktm.HostedServices\PostgresRegistration.cs" Link="Configuration\PostgresRegistration.cs" /></ItemGroup>
 </Project>
