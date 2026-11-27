@@ -2,7 +2,7 @@ using Ktm.Shared;
 using Microsoft.Extensions.Options;
 using Ktm.Directory.Infrastructure;
 using Ktm.Identity.Infrastructure;
-using Ktm.Hosting;
+using Ktm.HostedServices;
 
 var builder = WebApplication.CreateBuilder(args);
 

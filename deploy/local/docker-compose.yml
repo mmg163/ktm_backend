@@ -11,9 +11,6 @@ services:
       - postgres_password
       - ktm_migrator_password
       - ktm_app_password
-      - ktm_api_password
-      - ktm_binding_password
-      - ktm_interpretation_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../../db:/db:ro
@@ -97,9 +94,3 @@ secrets:
     file: ./secrets/ktm_migrator_password
   ktm_app_password:
     file: ./secrets/ktm_app_password
-  ktm_api_password:
-    file: ./secrets/ktm_api_password
-  ktm_binding_password:
-    file: ./secrets/ktm_binding_password
-  ktm_interpretation_password:
-    file: ./secrets/ktm_interpretation_password

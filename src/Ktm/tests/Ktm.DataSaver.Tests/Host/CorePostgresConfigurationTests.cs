@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Ktm.DataSaver.Tests.Host;
 
@@ -29,6 +30,29 @@ public sealed class CorePostgresConfigurationTests
             Assert.Same(context, scope.ServiceProvider.GetRequiredService<BindingDbContext>());
         }
         finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(null, "ktm_app")]
+    [InlineData("explicit_user", "explicit_user")]
+    public void DatabaseUsernameDefaultsToAppAndAllowsExplicitOverride(string? configuredUsername, string expectedUsername)
+    {
+        var settings = ValidSettings();
+        if (configuredUsername is null)
+        {
+            settings.Remove($"{Section}:Username");
+        }
+        else
+        {
+            settings[$"{Section}:Username"] = configuredUsername;
+        }
+
+        using var provider = Services(settings);
+        provider.GetRequiredService<IStartupValidator>().Validate();
+        using var scope = provider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<BindingDbContext>();
+        var connection = new NpgsqlConnectionStringBuilder(context.Database.GetConnectionString());
+        Assert.Equal(expectedUsername, connection.Username);
     }
 
     [Fact]

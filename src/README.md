@@ -441,8 +441,7 @@ curl -sS "$BASE/admin/v1/reprocessing/jobs"                                     
 только каркасы, обработка событий появится в последующем изменении.
 
 В корне репозитория создайте каталог `deploy/local/secrets` и файлы с паролями
-`postgres_password`, `ktm_migrator_password`, `ktm_app_password`, `ktm_api_password`,
-`ktm_binding_password`, `ktm_interpretation_password`. Файлы предназначены для локальной
+`postgres_password`, `ktm_migrator_password`, `ktm_app_password`. Файлы предназначены для локальной
 разработки и не входят в Git. Затем выполните:
 
 ```powershell
@@ -461,9 +460,11 @@ Kafka — на `localhost:19092`. Запустите API `dotnet run --project s
 
 Для каждого включённого обработчика ядра задайте отдельную секцию
 `Ktm__Binding__Postgres__*` или `Ktm__Interpretation__Postgres__*` с полями `Host`, `Port`,
-`Database`, `Username` и `Password` либо `Password_FILE`. Для API секция
+`Database` и `Password` либо `Password_FILE`. Для API секция
 `Ktm__Api__Postgres__*` подключает контексты Directory и Identity. Значение пароля и файл
-взаимоисключающие. Валидация активных секций выполняется при старте.
+взаимоисключающие. API, Binding и Interpretation по умолчанию используют пользователя
+`ktm_app` и общий файл `deploy/local/secrets/ktm_app_password`. Параметр `Username`
+можно задать явно для каждого подключения. Валидация активных секций выполняется при старте.
 
 EF Core используется для CRUD с отдельным scoped `DbContext` на модуль. Миграции схемы —
 только SQL-файлы `db/migrations`, применяемые разовой задачей под `ktm_migrator`.
