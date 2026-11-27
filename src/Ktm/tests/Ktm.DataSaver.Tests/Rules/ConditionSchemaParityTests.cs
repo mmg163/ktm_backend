@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Rules;
 using static Ktm.DataSaver.Tests.Rules.RuleTestSupport;
 
 namespace Ktm.DataSaver.Tests.Rules;

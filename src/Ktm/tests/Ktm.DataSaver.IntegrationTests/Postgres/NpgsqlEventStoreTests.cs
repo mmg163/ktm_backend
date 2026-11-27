@@ -1,8 +1,9 @@
 using Xunit.Abstractions;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Ktm.DataSaver.IntegrationTests.Support;
 using Npgsql;
@@ -266,7 +267,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         var json = template.Body.GetRawText().Replace("\"n\":0", "\"n\":" + fraction).Replace("access.pass", "access_granted");
         Assert.Contains(fraction, json);
 
-        var decoded = new Ktm.DataSaver.Core.Decoding.EventDecoder().Decode(System.Text.Encoding.UTF8.GetBytes(json));
+        var decoded = new EventDecoder().Decode(System.Text.Encoding.UTF8.GetBytes(json));
         Assert.True(decoded.IsSuccess, decoded.Detail);
 
         var result = await Store().WriteBatchAsync([decoded.Event!], Now, CancellationToken.None);
@@ -288,7 +289,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
             "1e-16384", "0." + zeros(16382) + "1e-1",
         ];
         var template = Event("skud", "num-boundary", At());
-        var decoder = new Ktm.DataSaver.Core.Decoding.EventDecoder();
+        var decoder = new EventDecoder();
         var mismatches = new List<string>();
         var accepted = 0;
         var rejected = 0;
@@ -419,7 +420,7 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
         await using var poison = await PoisonConstraint.AddAsync(db.AdminConnectionString);
 
         var ex = await Assert.ThrowsAsync<PostgresStoreException>(
-            () => Store().WriteBatchAsync([Event(source, "ok", At(0)), Event(source, PoisonConstraint.PoisonId, At(1))], Now, CancellationToken.None));
+            () => Store().WriteBatchAsync([Event(source, "ok", At(0)), Event(source, poison.PoisonId, At(1))], Now, CancellationToken.None));
         await Store().WriteBatchAsync([Event(source, "ok", At(0))], Now, CancellationToken.None);
 
         Assert.Equal(("23514", PoisonConstraint.Name, WriteErrorClass.Data), (ex.SqlState, ex.ConstraintName, WriteErrorClassifier.Classify(ex)));
@@ -428,8 +429,8 @@ public sealed class NpgsqlEventStoreTests(PostgresFixture db, ITestOutputHelper 
 
         // «Исправление причины»: после снятия ограничения то же событие записывается.
         await poison.DropAsync();
-        await Store().WriteBatchAsync([Event(source, PoisonConstraint.PoisonId, At(1))], Now, CancellationToken.None);
-        Assert.Equal(["ok", PoisonConstraint.PoisonId], (await ReadEventsAsync(source)).Select(r => r.SourceEventId));
+        await Store().WriteBatchAsync([Event(source, poison.PoisonId, At(1))], Now, CancellationToken.None);
+        Assert.Equal(["ok", poison.PoisonId], (await ReadEventsAsync(source)).Select(r => r.SourceEventId));
     }
 
     // Фиксирует итоговый список инфраструктурных и «сообщенческих» исключений на реальном драйвере (ADR-0006 п. 2.2, R-1).

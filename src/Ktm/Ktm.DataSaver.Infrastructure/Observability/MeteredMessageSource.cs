@@ -1,6 +1,6 @@
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
 
 namespace Ktm.DataSaver.Infrastructure.Observability;
 

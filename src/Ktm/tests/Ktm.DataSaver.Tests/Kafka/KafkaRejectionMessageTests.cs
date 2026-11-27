@@ -1,7 +1,7 @@
 using System.Text;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
 using Ktm.DataSaver.Infrastructure.Kafka;
 
 namespace Ktm.DataSaver.Tests.Kafka;

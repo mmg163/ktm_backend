@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
-using Ktm.DataSaver.Core.Ingestion;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.IntegrationTests.Host;

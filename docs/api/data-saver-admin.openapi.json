@@ -465,7 +465,8 @@
           "from",
           "to",
           "reason",
-          "maxRate"
+          "maxRate",
+          "topic"
         ],
         "type": "object",
         "properties": {
@@ -504,6 +505,13 @@
             ],
             "description": "Скорость, сообщений в секунду.",
             "format": "int32"
+          },
+          "topic": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Выбранный входной топик либо `null`."
           }
         },
         "description": "Параметры задачи, как они были приняты."
@@ -926,6 +934,13 @@
               "string"
             ],
             "description": "Источник: `dlq`, `rejected` или `raw`."
+          },
+          "topic": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Для raw: ktm.events.raw.skud, ktm.events.raw.cv или ktm.events.raw.1c-do; обязательно при regex-подписке. Для других источников запрещено."
           },
           "from": {
             "type": [

@@ -1,13 +1,13 @@
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using Ktm.DataSaver.Admin;
-using Ktm.DataSaver.Admin.Reprocessing;
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Reprocessing;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Reprocessing;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Tests.Reprocessing;
+using Ktm.HostedServices.Admin;
+using Ktm.HostedServices.Configuration;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -88,7 +88,7 @@ internal sealed class AdminTestHost : IAsyncDisposable
 
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton(manager);
-        builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ktm.DataSaver.Configuration.ReprocessOptions()));
+        builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new ReprocessOptions()));
         builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new Ktm.DataSaver.Infrastructure.Kafka.KafkaOptions()));
         builder.Services.AddAdmin(configuration);
         builder.Services.AddBuiltInAdminSections();

@@ -10,7 +10,9 @@ namespace Ktm.DataSaver.IntegrationTests.Kafka;
 /// <summary>Kafka (KRaft) в контейнере; тесты изолируются уникальными именами топиков и групп.</summary>
 public sealed class KafkaFixture : IAsyncLifetime
 {
-    private readonly KafkaContainer _container = new KafkaBuilder("apache/kafka:3.9.1").Build();
+    private readonly KafkaContainer _container = new KafkaBuilder("apache/kafka:3.9.1")
+        .WithEnvironment("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false")
+        .Build();
 
     public string BootstrapServers => _container.GetBootstrapAddress();
 

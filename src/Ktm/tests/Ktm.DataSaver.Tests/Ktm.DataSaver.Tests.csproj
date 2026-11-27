@@ -25,9 +25,9 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\Ktm.DataSaver.Core\Ktm.DataSaver.Core.csproj" />
+        <ProjectReference Include="..\..\Ktm.DataSaver.Application\Ktm.DataSaver.Application.csproj" />
         <ProjectReference Include="..\..\Ktm.DataSaver.Infrastructure\Ktm.DataSaver.Infrastructure.csproj" />
-        <ProjectReference Include="..\..\Ktm.DataSaver\Ktm.DataSaver.csproj" />
+        <ProjectReference Include="..\..\Ktm.HostedServices\Ktm.HostedServices.csproj" />
     </ItemGroup>
 
 </Project>

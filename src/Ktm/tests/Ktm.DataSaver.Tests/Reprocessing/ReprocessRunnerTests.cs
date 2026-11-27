@@ -1,7 +1,7 @@
 using System.Net.Sockets;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.Tests.Ingestion;
 using static Ktm.DataSaver.Tests.Reprocessing.ReprocessFixture;
 

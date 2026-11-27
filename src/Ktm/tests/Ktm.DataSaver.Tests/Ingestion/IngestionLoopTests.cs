@@ -1,10 +1,10 @@
-using Ktm.DataSaver.Core.Batching;
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Batching;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Resilience;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Tests.Decoding;
 using Ktm.DataSaver.Tests.Rules;
 using Microsoft.Extensions.Logging;
@@ -356,7 +356,7 @@ public class IngestionLoopTests
 
         private bool _thrown;
 
-        public IngestionVerdict Evaluate(Ktm.DataSaver.Core.Model.ConsumedMessage message, Ktm.DataSaver.Core.Model.ParsedEvent parsed)
+        public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed)
         {
             if (_thrown)
             {
@@ -393,7 +393,7 @@ public class IngestionLoopTests
 
         private bool _thrown;
 
-        public IngestionVerdict Evaluate(Ktm.DataSaver.Core.Model.ConsumedMessage message, Ktm.DataSaver.Core.Model.ParsedEvent parsed)
+        public IngestionVerdict Evaluate(ConsumedMessage message, ParsedEvent parsed)
         {
             if (_thrown)
             {

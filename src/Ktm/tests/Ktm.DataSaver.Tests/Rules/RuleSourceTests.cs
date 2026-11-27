@@ -1,5 +1,5 @@
 using System.Threading.Channels;
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Rules;
 using Microsoft.Extensions.Time.Testing;
 using static Ktm.DataSaver.Tests.Rules.RuleTestSupport;
 

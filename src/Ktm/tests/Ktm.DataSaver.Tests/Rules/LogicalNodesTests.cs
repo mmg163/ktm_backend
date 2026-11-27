@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Ktm.DataSaver.Core.Rules;
 using static Ktm.DataSaver.Tests.Rules.RuleTestSupport;
 
 namespace Ktm.DataSaver.Tests.Rules;

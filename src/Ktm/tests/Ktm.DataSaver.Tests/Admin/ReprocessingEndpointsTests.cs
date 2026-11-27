@@ -2,8 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.Tests.Reprocessing;
+using Ktm.HostedServices.Admin;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -243,7 +244,7 @@ public sealed class ReprocessingEndpointsTests
         await using var host = await AdminTestHost.StartAsync(open);
         // Лишнее поле тела - маркер данных: в аудит попадают только параметры задачи, не тело запроса.
         var noisyHeader = "ivanov" + new string('x', 100);
-        Assert.Equal("ivanovx", Ktm.DataSaver.Admin.AdminAudit.SanitizeRequestedBy("ivanov\u0007x"));
+        Assert.Equal("ivanovx", AdminAudit.SanitizeRequestedBy("ivanov\u0007x"));
         using var started = await host.PostJobAsync("""{"source":"dlq","reason":"write_data_error","note":"BODY-MARKER"}""", noisyHeader);
         var id = (await Json.OfAsync(started)).GetProperty("id").GetGuid();
         using var cancel = await host.Client.PostAsync($"{Jobs}/{id}/cancel", null);

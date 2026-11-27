@@ -1,8 +1,8 @@
 using System.Diagnostics.Metrics;
-using Ktm.DataSaver.Hosting;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.Tests.Ingestion;
+using Ktm.HostedServices.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 

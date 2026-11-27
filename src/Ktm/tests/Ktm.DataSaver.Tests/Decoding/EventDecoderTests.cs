@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
-using Ktm.DataSaver.Core.Decoding;
-using Ktm.DataSaver.Core.Model;
+using Ktm.DataSaver.Application.Decoding;
+using Ktm.DataSaver.Application.Model;
 
 namespace Ktm.DataSaver.Tests.Decoding;
 

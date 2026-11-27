@@ -1,4 +1,3 @@
-using Ktm.DataSaver.Core.Reprocessing;
 using Ktm.DataSaver.IntegrationTests.Host;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;
@@ -6,6 +5,7 @@ using Ktm.DataSaver.IntegrationTests.Support;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using System.Text.Json;
+using Ktm.DataSaver.Application.Reprocessing;
 
 namespace Ktm.DataSaver.IntegrationTests.Acceptance;
 
@@ -54,10 +54,10 @@ public sealed class ReprocessingAcceptanceTests(KafkaFixture kafka, PostgresFixt
         await using var constraint = await PoisonConstraint.AddAsync(postgres.AdminConnectionString);
         await using var app = DataSaverInstance.Start(run, settings => settings["DataSaver:Kafka:DlqTopic"] = dlq);
         await app.WaitReadyAsync();
-        await run.PublishAsync([("poison", run.Json(PoisonConstraint.PoisonId))]);
+        await run.PublishAsync([("poison", run.Json(constraint.PoisonId))]);
         await Wait.UntilAsync(async () => await run.CommittedAsync() == 1, "poison committed", TimeSpan.FromSeconds(120));
         Assert.Single(run.Kafka.Read(dlq, 1));
-        Assert.Equal(0, await PoisonRowsAsync(postgres));
+        Assert.Equal(0, await PoisonRowsAsync(postgres, constraint.PoisonId));
         await constraint.DropAsync();
 
         var manager = app.Services.GetRequiredService<ReprocessJobManager>();
@@ -69,7 +69,7 @@ public sealed class ReprocessingAcceptanceTests(KafkaFixture kafka, PostgresFixt
         Assert.Equal(ReprocessOutcome.Succeeded, firstResult.Outcome);
         var diagnostic = JsonSerializer.Serialize(new { firstResult.Counters, firstResult.Partitions, firstResult.TotalMessages, firstResult.ErrorCode, Report = manager.GetReport(first.Job.Id, 100, 0) });
         Assert.True(firstResult.Counters.Written == 1, diagnostic);
-        Assert.Equal(1, await PoisonRowsAsync(postgres));
+        Assert.Equal(1, await PoisonRowsAsync(postgres, constraint.PoisonId));
         var second = await manager.StartAsync(request, CancellationToken.None);
         Assert.Equal(StartStatus.Started, second.Status);
         await manager.WhenFinishedAsync(second.Job!.Id).WaitAsync(TimeSpan.FromSeconds(120));
@@ -77,17 +77,17 @@ public sealed class ReprocessingAcceptanceTests(KafkaFixture kafka, PostgresFixt
         Assert.Equal(ReprocessOutcome.Succeeded, secondResult.Outcome);
         Assert.Equal(0, secondResult.Counters.Written);
         Assert.Equal(1, secondResult.Counters.Duplicates);
-        Assert.Equal(1, await PoisonRowsAsync(postgres));
+        Assert.Equal(1, await PoisonRowsAsync(postgres, constraint.PoisonId));
         Assert.Equal(1, await run.CommittedAsync());
     }
 
-    private static async Task<long> PoisonRowsAsync(PostgresFixture postgres)
+    private static async Task<long> PoisonRowsAsync(PostgresFixture postgres, string poisonId)
     {
         await using var connection = new NpgsqlConnection(postgres.AdminConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand("SELECT count(*) FROM ktm.events WHERE source = @source AND source_event_id = @id AND occurred_at = @occurred", connection);
         command.Parameters.AddWithValue("source", "skud");
-        command.Parameters.AddWithValue("id", PoisonConstraint.PoisonId);
+        command.Parameters.AddWithValue("id", poisonId);
         command.Parameters.AddWithValue("occurred", new DateTimeOffset(2026, 11, 19, 4, 58, 12, TimeSpan.Zero));
         return (long)(await command.ExecuteScalarAsync())!;
     }

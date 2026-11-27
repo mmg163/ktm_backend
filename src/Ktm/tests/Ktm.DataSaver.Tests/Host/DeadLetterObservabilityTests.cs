@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Resilience;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.Tests.Decoding;
 using Microsoft.Extensions.Logging;

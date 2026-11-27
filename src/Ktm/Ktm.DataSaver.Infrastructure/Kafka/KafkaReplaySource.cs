@@ -2,8 +2,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Confluent.Kafka;
-using Ktm.DataSaver.Core.Model;
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Model;
+using Ktm.DataSaver.Application.Reprocessing;
 using Microsoft.Extensions.Logging;
 
 namespace Ktm.DataSaver.Infrastructure.Kafka;

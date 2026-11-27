@@ -1,4 +1,4 @@
-using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Application.Ingestion;
 using Microsoft.Extensions.Logging;
 
 namespace Ktm.DataSaver.Infrastructure.Observability;

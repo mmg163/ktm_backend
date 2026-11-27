@@ -1,6 +1,6 @@
 using System.Text;
 using Confluent.Kafka;
-using Ktm.DataSaver.Core.Reprocessing;
+using Ktm.DataSaver.Application.Reprocessing;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Microsoft.Extensions.Logging.Abstractions;
 

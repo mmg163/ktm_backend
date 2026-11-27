@@ -1,4 +1,4 @@
-using Ktm.DataSaver.Core.Rules;
+using Ktm.DataSaver.Application.Rules;
 using Ktm.DataSaver.Infrastructure.Postgres;
 using Ktm.DataSaver.IntegrationTests.Support;
 using Npgsql;

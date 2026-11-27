@@ -1,6 +1,6 @@
 using System.Net.Sockets;
-using Ktm.DataSaver.Core.Pipeline;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Pipeline;
+using Ktm.DataSaver.Application.Resilience;
 
 namespace Ktm.DataSaver.Tests.Resilience;
 

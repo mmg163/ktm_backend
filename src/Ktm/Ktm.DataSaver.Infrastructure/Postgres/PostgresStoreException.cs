@@ -1,4 +1,4 @@
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Resilience;
 using Npgsql;
 
 namespace Ktm.DataSaver.Infrastructure.Postgres;

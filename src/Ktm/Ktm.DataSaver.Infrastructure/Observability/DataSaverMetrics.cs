@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
-using Ktm.DataSaver.Core.Ingestion;
-using Ktm.DataSaver.Core.Resilience;
+using Ktm.DataSaver.Application.Ingestion;
+using Ktm.DataSaver.Application.Resilience;
 
 namespace Ktm.DataSaver.Infrastructure.Observability;
 

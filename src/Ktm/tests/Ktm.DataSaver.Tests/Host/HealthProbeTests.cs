@@ -1,4 +1,4 @@
-using Ktm.DataSaver.Health;
+using Ktm.HostedServices.Health;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 

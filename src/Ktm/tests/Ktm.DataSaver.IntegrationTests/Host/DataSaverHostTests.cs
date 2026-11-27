@@ -1,11 +1,11 @@
 using System.Net;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
-using Ktm.DataSaver.Health;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.IntegrationTests.Kafka;
 using Ktm.DataSaver.IntegrationTests.Postgres;
 using Ktm.DataSaver.IntegrationTests.Support;
+using Ktm.HostedServices.Health;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Testcontainers.Kafka;

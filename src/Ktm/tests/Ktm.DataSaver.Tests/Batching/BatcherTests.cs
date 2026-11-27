@@ -1,4 +1,4 @@
-using Ktm.DataSaver.Core.Batching;
+using Ktm.DataSaver.Application.Batching;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Ktm.DataSaver.Tests.Batching;

@@ -1,5 +1,5 @@
 using System.Text;
-using Ktm.DataSaver.Core.Ingestion;
+using Ktm.DataSaver.Application.Ingestion;
 using Ktm.DataSaver.Infrastructure.Kafka;
 using Ktm.DataSaver.Infrastructure.Observability;
 using Ktm.DataSaver.IntegrationTests.Host;

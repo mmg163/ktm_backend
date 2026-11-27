@@ -14,7 +14,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Ktm.DataSaver.Core\Ktm.DataSaver.Core.csproj" />
+        <ProjectReference Include="..\Ktm.DataSaver.Application\Ktm.DataSaver.Application.csproj" />
     </ItemGroup>
 
 </Project>
